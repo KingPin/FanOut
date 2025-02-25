@@ -19,6 +19,7 @@ A high-performance HTTP request distributor that asynchronously fans out request
 
 - **Async Request Processing**:
   - Concurrent request distribution
+  - Local echo mode for testing
   - Configurable timeouts and retries
   - Request/Response logging
 - **Security Features**:
@@ -64,10 +65,12 @@ docker run -p 8080:8080 \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TARGETS` | `""` (Required) | Comma-separated list of target URLs |
+| `TARGETS` | `""` (Required) | Comma-separated list of target URLs, or "localonly" for echo mode |
 | `PORT` | `8080` | Server port |
 | `MAX_BODY_SIZE` | `10MB` | Maximum request body size |
 | `TZ` | `UTC` | Container timezone |
+| `ECHO_MODE_HEADER` | `false` | Add X-Echo-Mode header in echo responses |
+| `ECHO_MODE_RESPONSE` | `simple` | Echo response format (`simple` or `full`) |
 
 ### Request Timeouts
 
@@ -80,6 +83,36 @@ docker run -p 8080:8080 \
 TARGETS=https://analytics.service,https://audit.service
 HTTP_TIMEOUT=15s
 SENSITIVE_HEADERS=Authorization,X-API-Key
+```
+
+### Operating Modes
+
+#### Normal Fan-out Mode
+```bash
+export TARGETS="https://api1.example.com,https://api2.example.com"
+```
+
+#### Echo Mode (Local Development)
+```bash
+# Enable echo mode for testing
+export TARGETS="localonly"
+
+# Optional: Configure echo behavior
+export ECHO_MODE_HEADER="true"    # Add diagnostic headers
+export ECHO_MODE_RESPONSE="full"  # Return detailed request info
+
+# Example echo response
+curl -X POST http://localhost:8080/fanout \
+  -H "Content-Type: application/json" \
+  -d '{"test":"data"}'
+
+# Response (with ECHO_MODE_RESPONSE=full):
+{
+  "headers": {
+    "Content-Type": ["application/json"]
+  },
+  "body": "{\"test\":\"data\"}"
+}
 ```
 
 ## API Endpoints 🛣️
