@@ -21,12 +21,12 @@ import (
 
 const (
     defaultMaxBodySize = 10 * 1024 * 1024 // 10MB - Default maximum request body size
-    logQueueSize       = 10000            // Size of the async logging buffer queue
-    maxLogPayload      = 1024             // Maximum payload size to log before truncation
+    logQueueSize      = 10000            // Size of the async logging buffer queue
+    maxLogPayload     = 1024             // Maximum payload size to log before truncation
 
-    // Configuration for timeouts and retries
-    requestTimeout = 30 * time.Second
-    clientTimeout  = 10 * time.Second
+    // Default timeout values
+    defaultRequestTimeout = 30 * time.Second
+    defaultClientTimeout = 10 * time.Second
 )
 
 var (
@@ -34,6 +34,10 @@ var (
     logQueue   = make(chan string, logQueueSize)
     logOnce    sync.Once // Ensures logging goroutine is initialized only once
     maxBodySize int64    // Maximum body size for incoming requests
+    
+    // Timeout configuration
+    requestTimeout time.Duration // Global request timeout
+    clientTimeout  time.Duration // Per-target timeout
 
     // Header monitoring - Headers that should trigger warnings when detected
     sensitiveHeaders = map[string]bool{
@@ -68,6 +72,29 @@ func init() {
         return
     }
     maxBodySize = int64(size)
+
+    // Parse timeout configurations
+    if timeout := os.Getenv("REQUEST_TIMEOUT"); timeout != "" {
+        if d, err := time.ParseDuration(timeout); err != nil {
+            log.Printf("Invalid REQUEST_TIMEOUT '%s', using default: %v", timeout, err)
+            requestTimeout = defaultRequestTimeout
+        } else {
+            requestTimeout = d
+        }
+    } else {
+        requestTimeout = defaultRequestTimeout
+    }
+
+    if timeout := os.Getenv("CLIENT_TIMEOUT"); timeout != "" {
+        if d, err := time.ParseDuration(timeout); err != nil {
+            log.Printf("Invalid CLIENT_TIMEOUT '%s', using default: %v", timeout, err)
+            clientTimeout = defaultClientTimeout
+        } else {
+            clientTimeout = d
+        }
+    } else {
+        clientTimeout = defaultClientTimeout
+    }
 }
 
 // logAsync logs a message asynchronously to prevent blocking the request handler.

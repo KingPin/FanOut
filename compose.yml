@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  fanout:
+    image: ghcr.io/kingpin/fanout:latest
+    # Build from local Dockerfile if needed
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   platforms:
+    #     - linux/amd64
+    #     - linux/arm64
+
+    # Container name for easier reference
+    container_name: fanout
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Port mapping
+    ports:
+      - "8080:8080"
+
+    # Resource limits - Comment out if not needed
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "/fanout", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # Environment variables
+    environment:
+      # Required Settings
+      - TARGETS=https://primary.service,https://secondary.service  # Required: Comma-separated target URLs or "localonly"
+      - PORT=8080                                                 # Optional: Server port (default: 8080)
+      
+      # Request Handling
+      - MAX_BODY_SIZE=10MB                                       # Optional: Maximum request body size (default: 10MB)
+      - REQUEST_TIMEOUT=30s                                      # Optional: Global request timeout (default: 30s)
+      - CLIENT_TIMEOUT=10s                                       # Optional: Per-target timeout (default: 10s)
+      
+      # Echo Mode Configuration
+      - ECHO_MODE_HEADER=false                                   # Optional: Add diagnostic headers in echo mode
+      - ECHO_MODE_RESPONSE=simple                                # Optional: Echo response format (simple/full)
+      
+      # Security Settings
+      - SENSITIVE_HEADERS=Authorization,X-API-Key                # Optional: Additional sensitive headers to monitor
+      
+      # Operational Settings
+      - TZ=UTC                                                   # Optional: Container timezone (default: UTC)
+
+    # Network configuration
+    networks:
+      - fanout-net
+
+# Define custom network
+networks:
+  fanout-net:
