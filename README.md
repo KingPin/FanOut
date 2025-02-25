@@ -1,6 +1,6 @@
 # FanOut - Async HTTP Request Distributor
 
-![Go Version](https://img.shields.io/badge/go-1.21%2B-blue)
+![Go Version](https://img.shields.io/badge/go-1.24%2B-blue)
 ![Docker Ready](https://img.shields.io/badge/docker-ready-green)
 
 A high-performance HTTP request distributor that asynchronously fans out requests to multiple endpoints. Built for modern cloud-native architectures.
@@ -17,47 +17,62 @@ A high-performance HTTP request distributor that asynchronously fans out request
 
 ## Features 🚀
 
-- **True Async Forwarding**: Immediate 202 response with background processing
-- **Intelligent Routing**:
-  - Circuit breaker pattern for endpoint failures
-  - Connection pooling and keep-alive
-  - Header sanitization and propagation
-- **Enterprise Security**:
-  - Non-root Docker execution
-  - Request size limiting (10MB default)
-  - Sensitive header filtering
-- **Production Grade**:
-  - Health checks endpoint
-  - Structured JSON logging
-  - Resource constraints
-  - Prometheus metrics (WIP)
+- **Async Request Processing**:
+  - Concurrent request distribution
+  - Configurable timeouts and retries
+  - Request/Response logging
+- **Security Features**:
+  - Non-root container execution
+  - Configurable request size limits
+  - Sensitive header detection
+- **Operational Excellence**:
+  - Health check endpoint
+  - Async logging with overflow protection
+  - Docker health checks
+  - Multi-arch container support (amd64, arm64)
 
 ## Quick Start 🚦
 
-### Local Execution
+### Local Development
 
 ```bash
+# Set required environment variables
 export TARGETS="https://service1.example.com,https://service2.example.com"
-go run main.go
+export MAX_BODY_SIZE="10MB"
+export PORT=8080
+
+# Run the application
+go run fanout.go
 ```
 
-### Docker Run
+### Docker Deployment
 
 ```bash
+# Pull the image
+docker pull ghcr.io/yourorg/fanout:latest
+
+# Run with configuration
 docker run -p 8080:8080 \
--e TARGETS="https://backup.example.com" \
-ghcr.io/yourrepo/fanout:latest
+  -e TARGETS="https://api1.example.com,https://api2.example.com" \
+  -e MAX_BODY_SIZE="10MB" \
+  ghcr.io/yourorg/fanout:latest
 ```
 
 ## Configuration ⚙️
 
 ### Environment Variables
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TARGETS` | Required | Comma-separated endpoints |
-| `PORT` | 8080 | HTTP listener port |
-| `MAX_BODY_SIZE` | 10485760 | Max request size (bytes) |
-| `HTTP_TIMEOUT` | 10s | Downstream request timeout |
+| `TARGETS` | `""` (Required) | Comma-separated list of target URLs |
+| `PORT` | `8080` | Server port |
+| `MAX_BODY_SIZE` | `10MB` | Maximum request body size |
+| `TZ` | `UTC` | Container timezone |
+
+### Request Timeouts
+
+- Request Timeout: 30 seconds (global timeout)
+- Client Timeout: 10 seconds (per target timeout)
 
 ### Example .env File
 
@@ -65,6 +80,32 @@ ghcr.io/yourrepo/fanout:latest
 TARGETS=https://analytics.service,https://audit.service
 HTTP_TIMEOUT=15s
 SENSITIVE_HEADERS=Authorization,X-API-Key
+```
+
+## API Endpoints 🛣️
+
+### Fan-out Endpoint
+```bash
+POST /fanout
+Content-Type: application/json
+
+# Returns
+[
+  {
+    "target": "https://api1.example.com",
+    "status": 200,
+    "body": "...",
+    "latency": "150ms"
+  }
+]
+```
+
+### Health Check
+```bash
+GET /health
+
+# Returns
+{"status": "healthy"}
 ```
 
 ## Docker Deployment 🐳
@@ -98,6 +139,21 @@ docker build \
 -t fanout:custom .
 ```
 
+### Building the Image
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t yourorg/fanout:latest .
+```
+
+### Runtime Features
+- Non-root execution (UID 1000)
+- Built-in health checks
+- Timezone support
+- CA certificates included
+- Minimal scratch-based image
+
 ## Architecture 📐
 
 ### Key Components:
@@ -108,6 +164,10 @@ docker build \
 5. **Metrics Collector**: Track performance indicators (WIP)
 
 ## Development 🛠️
+
+### Prerequisites
+- Go 1.24+
+- Docker (for container builds)
 
 ### Build & Test
 
@@ -125,6 +185,27 @@ go build -tags=debug -o fanout-debug
 wrk -t12 -c400 -d60s http://localhost:8080/fanout
 
 
+### Testing
+
+```bash
+# Run tests
+go test -v -race ./...
+
+# Local development with echo mode
+export TARGETS=localonly
+go run fanout.go
+```
+
+### Building
+
+```bash
+# Build binary
+go build -trimpath -ldflags="-w -s" -o fanout
+
+# Build container
+docker build -t fanout:dev .
+```
+
 ### Release Process
 1. Update version in `VERSION` file
 2. Run security scan: `gosec ./...`
@@ -141,8 +222,14 @@ We welcome contributions! Please follow these steps:
 
 ## License 📄
 
-MIT
+MIT License
 
+## Security 🔒
+
+- Sensitive headers are automatically detected and logged
+- All requests are size-limited
+- Non-root container execution
+- TLS certificate handling included
 
 ## FAQ ❓
 
