@@ -143,8 +143,25 @@ GET /health
 
 ## Docker Deployment 🐳
 
-### Production Stack
+### Production Deployment
 
+The project includes a fully configured `compose.yml` file with all available options and detailed comments. 
+To deploy in production:
+
+```bash
+# Clone the repository
+wget https://raw.githubusercontent.com/KingPin/FanOut/refs/heads/main/compose.yml
+
+# Start the service
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+See [compose.yml](./compose.yml) for all available configuration options and environment variables.
+
+### Production Stack
 
 # docker-compose.prod.yml
 
@@ -204,7 +221,6 @@ docker buildx build \
 
 ### Build & Test
 
-
 # Run unit tests with race detection
 
 go test -v -race ./...
@@ -216,7 +232,6 @@ go build -tags=debug -o fanout-debug
 # Performance benchmark
 
 wrk -t12 -c400 -d60s http://localhost:8080/fanout
-
 
 ### Testing
 
