@@ -13,6 +13,7 @@ A high-performance HTTP request distributor that asynchronously fans out request
 - [Configuration](#configuration-️)
   - [Environment Variables](#environment-variables)
   - [Operating Modes](#operating-modes)
+- [Monitoring & Metrics](#monitoring--metrics-)
 - [API Endpoints](#api-endpoints-️)
   - [Fan-out Endpoint](#fan-out-endpoint)
   - [Health Check](#health-check)
@@ -44,6 +45,7 @@ A high-performance HTTP request distributor that asynchronously fans out request
   - Sensitive header detection
 - **Operational Excellence**:
   - Health check endpoint
+  - Prometheus metrics and monitoring
   - Async logging with overflow protection
   - Docker health checks
   - Multi-arch container support (amd64, arm64)
@@ -90,6 +92,7 @@ docker run -p 8080:8080 \
 | `ENDPOINT_PATH` | `/fanout` | Configurable endpoint path |
 | `REQUEST_TIMEOUT` | `30s` | Global request timeout |
 | `CLIENT_TIMEOUT` | `10s` | Per-target timeout |
+| `METRICS_ENABLED` | `false` | Enable Prometheus metrics endpoint |
 
 ### Example .env File
 
@@ -98,6 +101,17 @@ TARGETS=https://analytics.service,https://audit.service
 ENDPOINT_PATH=/api/v1/fanout
 HTTP_TIMEOUT=15s
 SENSITIVE_HEADERS=Authorization,X-API-Key
+```
+
+## Monitoring & Metrics 📊
+
+FanOut provides built-in Prometheus metrics for real-time monitoring and alerting.
+
+### Enabling Metrics
+
+```bash
+# Enable metrics endpoint
+export METRICS_ENABLED=true
 ```
 
 ### Operating Modes
@@ -310,4 +324,3 @@ A: Tested with 500+ endpoints - scale horizontally for higher loads (needs new t
 
 **Q: How to secure sensitive data?**  
 A: Headers like Authorization are automatically filtered - configure others via env
-````
