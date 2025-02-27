@@ -6,14 +6,31 @@
 A high-performance HTTP request distributor that asynchronously fans out requests to multiple endpoints. Built for modern cloud-native architectures.
 
 ## Table of Contents
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Docker Deployment](#docker-deployment)
-- [Architecture](#architecture)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
+- [Features](#features-)
+- [Quick Start](#quick-start-)
+  - [Local Development](#local-development)
+  - [Docker Deployment](#docker-deployment)
+- [Configuration](#configuration-️)
+  - [Environment Variables](#environment-variables)
+  - [Request Timeouts](#request-timeouts)
+  - [Operating Modes](#operating-modes)
+- [API Endpoints](#api-endpoints-️)
+  - [Fan-out Endpoint](#fan-out-endpoint)
+  - [Health Check](#health-check)
+- [Docker Deployment](#docker-deployment-)
+  - [Production Deployment](#production-deployment)
+  - [Build Arguments](#build-arguments)
+  - [Runtime Features](#runtime-features)
+- [Architecture](#architecture-)
+  - [Key Components](#key-components)
+- [Development](#development-️)
+  - [Prerequisites](#prerequisites)
+  - [Build & Test](#build--test)
+  - [Release Process](#release-process)
+- [Contributing](#contributing-)
+- [License](#license-)
+- [Security](#security-)
+- [FAQ](#faq-)
 
 ## Features 🚀
 
@@ -295,3 +312,4 @@ A: Tested with 500+ endpoints - scale horizontally for higher loads (needs new t
 
 **Q: How to secure sensitive data?**  
 A: Headers like Authorization are automatically filtered - configure others via env
+````
