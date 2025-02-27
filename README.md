@@ -12,7 +12,6 @@ A high-performance HTTP request distributor that asynchronously fans out request
   - [Docker Deployment](#docker-deployment)
 - [Configuration](#configuration-️)
   - [Environment Variables](#environment-variables)
-  - [Request Timeouts](#request-timeouts)
   - [Operating Modes](#operating-modes)
 - [API Endpoints](#api-endpoints-️)
   - [Fan-out Endpoint](#fan-out-endpoint)
@@ -88,16 +87,15 @@ docker run -p 8080:8080 \
 | `TZ` | `UTC` | Container timezone |
 | `ECHO_MODE_HEADER` | `false` | Add X-Echo-Mode header in echo responses |
 | `ECHO_MODE_RESPONSE` | `simple` | Echo response format (`simple` or `full`) |
-
-### Request Timeouts
-
-- Request Timeout: 30 seconds (global timeout)
-- Client Timeout: 10 seconds (per target timeout)
+| `ENDPOINT_PATH` | `/fanout` | Configurable endpoint path |
+| `REQUEST_TIMEOUT` | `30s` | Global request timeout |
+| `CLIENT_TIMEOUT` | `10s` | Per-target timeout |
 
 ### Example .env File
 
 ```
 TARGETS=https://analytics.service,https://audit.service
+ENDPOINT_PATH=/api/v1/fanout
 HTTP_TIMEOUT=15s
 SENSITIVE_HEADERS=Authorization,X-API-Key
 ```
