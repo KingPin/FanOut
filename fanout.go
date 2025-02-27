@@ -12,11 +12,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dustin/go-humanize" // Used for human-readable size parsing
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -48,6 +52,51 @@ var (
 	}
 
 	endpointPath string // Configurable endpoint path
+
+	// Metrics configuration
+	metricsEnabled bool
+
+	// Prometheus metrics
+	requestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fanout_requests_total",
+			Help: "The total number of processed requests",
+		},
+		[]string{"path", "method"},
+	)
+
+	targetRequestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fanout_target_requests_total",
+			Help: "The total number of requests sent to targets",
+		},
+		[]string{"target", "status"},
+	)
+
+	requestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "fanout_request_duration_seconds",
+			Help:    "The request latencies in seconds",
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 10), // 10ms to ~10s
+		},
+		[]string{"target"},
+	)
+
+	activeRequests = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "fanout_active_requests",
+			Help: "The number of requests currently being processed",
+		},
+	)
+
+	bodySize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "fanout_request_body_size_bytes",
+			Help:    "Size of request bodies in bytes",
+			Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // 1KB to ~1MB
+		},
+		[]string{"path"},
+	)
 )
 
 // init initializes the application settings.
@@ -110,6 +159,9 @@ func init() {
 	} else {
 		endpointPath = defaultEndpointPath
 	}
+
+	// Check if metrics are enabled
+	metricsEnabled = strings.ToLower(os.Getenv("METRICS_ENABLED")) == "true"
 }
 
 // logAsync logs a message asynchronously to prevent blocking the request handler.
@@ -209,6 +261,12 @@ type Response struct {
 
 // multiplex fans out the incoming request to all configured targets
 func multiplex(w http.ResponseWriter, r *http.Request) {
+	if metricsEnabled {
+		requestsTotal.WithLabelValues(r.URL.Path, r.Method).Inc()
+		activeRequests.Inc()
+		defer activeRequests.Dec()
+	}
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
@@ -221,6 +279,10 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	if metricsEnabled {
+		bodySize.WithLabelValues(r.URL.Path).Observe(float64(len(bodyBytes)))
+	}
 
 	// Parse targets from environment
 	targets := strings.Split(os.Getenv("TARGETS"), ",")
@@ -272,6 +334,21 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 // sendRequest sends a single request to a target
 func sendRequest(ctx context.Context, client *http.Client, target string, originalReq *http.Request, body []byte) Response {
 	resp := Response{Target: target}
+
+	startTime := time.Now()
+	defer func() {
+		if metricsEnabled {
+			duration := time.Since(startTime).Seconds()
+			requestDuration.WithLabelValues(target).Observe(duration)
+
+			// Record status with default of 0 for errors
+			status := strconv.Itoa(resp.Status)
+			if resp.Status == 0 && resp.Error != "" {
+				status = "error"
+			}
+			targetRequestsTotal.WithLabelValues(target, status).Inc()
+		}
+	}()
 
 	// Create new request
 	req, err := http.NewRequestWithContext(ctx, originalReq.Method, target, bytes.NewReader(body))
@@ -342,6 +419,12 @@ func main() {
 	// Add health check route
 	http.HandleFunc("/health", healthCheck)
 
+	// Add metrics endpoint if enabled
+	if metricsEnabled {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Print("Metrics enabled at /metrics endpoint")
+	}
+
 	// Determine port from environment or use default
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -357,9 +440,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s)",
+	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v)",
 		port,
 		endpointPath,
-		humanize.Bytes(uint64(maxBodySize)))
+		humanize.Bytes(uint64(maxBodySize)),
+		metricsEnabled)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
