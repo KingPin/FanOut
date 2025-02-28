@@ -104,7 +104,7 @@ SENSITIVE_HEADERS=Authorization,Cookie,X-API-Key
 METRICS_ENABLED=true
 
 # Echo mode settings (for development)
-TARGETS=localonly
+TARGETS=localonly     # only use TARGETS ONCE, either localonly OR remote URLs. 
 ECHO_MODE_HEADER=true
 ECHO_MODE_RESPONSE=full
 ```
