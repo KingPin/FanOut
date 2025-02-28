@@ -24,6 +24,27 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// Log levels
+const (
+	LogLevelDebug = iota
+	LogLevelInfo
+	LogLevelWarn
+	LogLevelError
+
+	defaultLogLevel  = LogLevelInfo // Default log level
+	defaultLogFormat = "text"       // Default log format (text or json)
+)
+
+// Other existing constants remain the same...
+
+// LogEntry represents a structured log entry
+type LogEntry struct {
+	Time    time.Time         `json:"time"`
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Context map[string]string `json:"context,omitempty"`
+}
+
 const (
 	defaultMaxBodySize = 10 * 1024 * 1024 // 10MB - Default maximum request body size
 	logQueueSize       = 10000            // Size of the async logging buffer queue
@@ -42,7 +63,7 @@ const (
 
 var (
 	// Async logging setup - Provides non-blocking log operations
-	logQueue    = make(chan string, logQueueSize)
+	logQueue    = make(chan LogEntry, logQueueSize)
 	logOnce     sync.Once // Ensures logging goroutine is initialized only once
 	maxBodySize int64     // Maximum body size for incoming requests
 
@@ -120,6 +141,22 @@ var (
 		},
 		[]string{"target", "attempts"},
 	)
+
+	// Logging configuration
+	logLevel    int    // Minimum log level
+	logFormat   string // Log format (text or json)
+	logLevelMap = map[string]int{
+		"debug": LogLevelDebug,
+		"info":  LogLevelInfo,
+		"warn":  LogLevelWarn,
+		"error": LogLevelError,
+	}
+	logLevelNames = map[int]string{
+		LogLevelDebug: "DEBUG",
+		LogLevelInfo:  "INFO",
+		LogLevelWarn:  "WARN",
+		LogLevelError: "ERROR",
+	}
 )
 
 // init initializes the application settings.
@@ -129,10 +166,43 @@ func init() {
 	logOnce.Do(func() {
 		go func() {
 			for entry := range logQueue {
-				log.Print(entry) // Simply print the entry, no need to requeue
+				// Process log entry based on format
+				if logFormat == "json" {
+					// JSON format
+					jsonBytes, err := json.Marshal(entry)
+					if err != nil {
+						log.Printf("ERROR: Failed to marshal log entry: %v", err)
+					} else {
+						log.Print(string(jsonBytes))
+					}
+				} else {
+					// Text format (default)
+					contextStr := ""
+					if len(entry.Context) > 0 {
+						parts := make([]string, 0, len(entry.Context))
+						for k, v := range entry.Context {
+							parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+						}
+						contextStr = " " + strings.Join(parts, " ")
+					}
+					log.Printf("[%s]%s %s", entry.Level, contextStr, entry.Message)
+				}
 			}
 		}()
 	})
+
+	// Parse logging configuration
+	logLevelStr := strings.ToLower(os.Getenv("LOG_LEVEL"))
+	if level, ok := logLevelMap[logLevelStr]; ok {
+		logLevel = level
+	} else {
+		logLevel = defaultLogLevel
+	}
+
+	logFormat = strings.ToLower(os.Getenv("LOG_FORMAT"))
+	if logFormat != "json" && logFormat != "text" {
+		logFormat = defaultLogFormat
+	}
 
 	// Parse and set maximum body size from environment variable
 	sizeStr := os.Getenv("MAX_BODY_SIZE")
@@ -202,17 +272,75 @@ func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// logAsync logs a message asynchronously to prevent blocking the request handler.
-// Falls back to warning if the log queue is full.
-// Parameters:
-//   - format: Printf-style format string
-//   - args: Arguments for the format string
-func logAsync(format string, args ...interface{}) {
-	entry := fmt.Sprintf(format, args...)
+// Level-specific logging functions
+func logDebug(format string, args ...interface{}) {
+	logWithLevel(LogLevelDebug, nil, format, args...)
+}
+
+func logInfo(format string, args ...interface{}) {
+	logWithLevel(LogLevelInfo, nil, format, args...)
+}
+
+func logWarn(format string, args ...interface{}) {
+	logWithLevel(LogLevelWarn, nil, format, args...)
+}
+
+func logError(format string, args ...interface{}) {
+	logWithLevel(LogLevelError, nil, format, args...)
+}
+
+// Context-aware logging functions
+func logDebugWithContext(ctx map[string]string, format string, args ...interface{}) {
+	logWithLevel(LogLevelDebug, ctx, format, args...)
+}
+
+func logInfoWithContext(ctx map[string]string, format string, args ...interface{}) {
+	logWithLevel(LogLevelInfo, ctx, format, args...)
+}
+
+func logWarnWithContext(ctx map[string]string, format string, args ...interface{}) {
+	logWithLevel(LogLevelWarn, ctx, format, args...)
+}
+
+func logErrorWithContext(ctx map[string]string, format string, args ...interface{}) {
+	logWithLevel(LogLevelError, ctx, format, args...)
+}
+
+// logWithLevel logs a message with specific level and context
+func logWithLevel(level int, context map[string]string, format string, args ...interface{}) {
+	// Skip if below current log level
+	if level < logLevel {
+		return
+	}
+
+	entry := LogEntry{
+		Time:    time.Now(),
+		Level:   logLevelNames[level],
+		Message: fmt.Sprintf(format, args...),
+		Context: context,
+	}
+
 	select {
 	case logQueue <- entry: // Non-blocking attempt to queue log entry
 	default:
-		log.Printf("WARNING: Log queue full, dropped entry: %s", entry)
+		// If queue is full, log directly to stderr for errors, drop otherwise
+		if level >= LogLevelError {
+			log.Printf("WARNING: Log queue full, logging ERROR directly: %s", entry.Message)
+		}
+	}
+}
+
+// For backward compatibility, remap logAsync to appropriate level
+func logAsync(format string, args ...interface{}) {
+	// Determine level based on message prefix
+	message := fmt.Sprintf(format, args...)
+
+	if strings.HasPrefix(message, "ERROR") {
+		logError(message)
+	} else if strings.HasPrefix(message, "WARNING") {
+		logWarn(message)
+	} else {
+		logInfo(message)
 	}
 }
 
@@ -226,7 +354,7 @@ func cloneHeaders(original http.Header) http.Header {
 	cloned := make(http.Header)
 	for k, vv := range original {
 		if sensitiveHeaders[k] {
-			logAsync("WARNING: Sensitive header detected: %s", k)
+			logWarn("Sensitive header detected: %s", k)
 		}
 		cloned[k] = vv
 	}
@@ -242,7 +370,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	// Read limited body to prevent memory exhaustion attacks
 	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
-		logAsync("ERROR reading body: %v", err)
+		logError("Error reading body: %v", err)
 		http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -276,7 +404,13 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	if len(loggedBody) > maxLogPayload {
 		loggedBody = loggedBody[:maxLogPayload] + "...[TRUNCATED]"
 	}
-	logAsync("ECHO REQUEST:\nHeaders: %+v\nBody: %s", r.Header, loggedBody)
+	logDebugWithContext(
+		map[string]string{
+			"method": r.Method,
+			"path":   r.URL.Path,
+			"remote": r.RemoteAddr,
+		},
+		"Echo request received with body length %d", len(bodyBytes))
 }
 
 // healthCheck responds to HTTP requests with a health status.
@@ -467,7 +601,12 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		if metricsEnabled {
 			retrySuccess.WithLabelValues(target, strconv.Itoa(attempts)).Inc()
 		}
-		logAsync("Request succeeded after %d retries to %s", attempts, target)
+		logInfoWithContext(
+			map[string]string{
+				"target":   target,
+				"attempts": strconv.Itoa(attempts),
+			},
+			"Request succeeded after %d retries", attempts)
 	}
 
 	defer response.Body.Close()
@@ -523,7 +662,7 @@ func writeJSON(w http.ResponseWriter, v interface{}) error {
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(v); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		logAsync("ERROR encoding JSON: %v", err)
+		logError("Error encoding JSON: %v", err)
 		return err
 	}
 	return nil
@@ -541,13 +680,17 @@ func writeJSONError(w http.ResponseWriter, message string, status int) {
 func main() {
 	log.SetOutput(os.Stdout) // Direct logs to standard output
 
+	logInfo("Starting FanOut service with log level '%s' and format '%s'",
+		logLevelNames[logLevel], logFormat)
+
 	// Determine handler based on TARGETS environment variable
 	targets := os.Getenv("TARGETS")
 	if targets == "localonly" {
 		http.HandleFunc(endpointPath, echoHandler)
-		log.Print("Running in ECHO MODE")
+		logInfo("Running in ECHO MODE")
 	} else {
 		http.HandleFunc(endpointPath, multiplex) // multiplex function handles fan-out to multiple targets
+		logInfo("Running in MULTIPLEX MODE with %d targets", len(strings.Split(targets, ",")))
 	}
 
 	// Add health check route
@@ -574,11 +717,12 @@ func main() {
 		os.Exit(0)
 	}
 
-	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v, Max Retries: %d)",
+	logInfo("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v, Max Retries: %d, Log level: %s)",
 		port,
 		endpointPath,
 		humanize.Bytes(uint64(maxBodySize)),
 		metricsEnabled,
-		maxRetries)
+		maxRetries,
+		logLevelNames[logLevel])
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
