@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -33,6 +34,10 @@ const (
 	defaultClientTimeout  = 10 * time.Second
 
 	defaultEndpointPath = "/fanout" // Default endpoint path
+
+	defaultMaxRetries   = 3                      // Default number of retry attempts
+	initialRetryBackoff = 100 * time.Millisecond // Initial backoff before first retry
+	maxRetryBackoff     = 1 * time.Second        // Maximum retry backoff
 )
 
 var (
@@ -96,6 +101,24 @@ var (
 			Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // 1KB to ~1MB
 		},
 		[]string{"path"},
+	)
+
+	maxRetries int // Maximum number of retry attempts
+
+	retriesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fanout_retries_total",
+			Help: "The total number of retry attempts",
+		},
+		[]string{"target", "status"},
+	)
+
+	retrySuccess = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fanout_retry_success_total",
+			Help: "The total number of successful requests after retry",
+		},
+		[]string{"target", "attempts"},
 	)
 )
 
@@ -162,6 +185,21 @@ func init() {
 
 	// Check if metrics are enabled
 	metricsEnabled = strings.ToLower(os.Getenv("METRICS_ENABLED")) == "true"
+
+	// Parse max retries from environment
+	if retriesStr := os.Getenv("MAX_RETRIES"); retriesStr != "" {
+		if retries, err := strconv.Atoi(retriesStr); err != nil || retries < 0 {
+			log.Printf("Invalid MAX_RETRIES '%s', using default: %v", retriesStr, err)
+			maxRetries = defaultMaxRetries
+		} else {
+			maxRetries = retries
+		}
+	} else {
+		maxRetries = defaultMaxRetries
+	}
+
+	// Seed the random number generator
+	rand.Seed(time.Now().UnixNano())
 }
 
 // logAsync logs a message asynchronously to prevent blocking the request handler.
@@ -252,11 +290,12 @@ func healthCheck(w http.ResponseWriter, r *http.Request) {
 
 // Response represents the structure of responses from target endpoints
 type Response struct {
-	Target  string        `json:"target"`
-	Status  int           `json:"status"`
-	Body    string        `json:"body,omitempty"`
-	Error   string        `json:"error,omitempty"`
-	Latency time.Duration `json:"latency"`
+	Target   string        `json:"target"`
+	Status   int           `json:"status"`
+	Body     string        `json:"body,omitempty"`
+	Error    string        `json:"error,omitempty"`
+	Latency  time.Duration `json:"latency"`
+	Attempts int           `json:"attempts,omitempty"` // Number of attempts (including initial)
 }
 
 // multiplex fans out the incoming request to all configured targets
@@ -350,24 +389,87 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		}
 	}()
 
-	// Create new request
-	req, err := http.NewRequestWithContext(ctx, originalReq.Method, target, bytes.NewReader(body))
-	if err != nil {
-		resp.Status = http.StatusInternalServerError
-		resp.Error = fmt.Sprintf("Failed to create request: %v", err)
-		return resp
+	// Track retries
+	var err error
+	var response *http.Response
+	attempts := 0
+	backoff := initialRetryBackoff
+
+	for attempts <= maxRetries { // <= to include initial attempt
+		if attempts > 0 {
+			// This is a retry attempt
+			logAsync("Retry %d/%d for %s after %v", attempts, maxRetries, target, backoff)
+			if metricsEnabled {
+				retriesTotal.WithLabelValues(target, "attempt").Inc()
+			}
+
+			// Apply backoff with jitter
+			select {
+			case <-time.After(addJitter(backoff)):
+				// Continue with retry
+			case <-ctx.Done():
+				// Context timeout/cancellation during backoff
+				resp.Status = http.StatusGatewayTimeout
+				resp.Error = fmt.Sprintf("Context cancelled during retry: %v", ctx.Err())
+				return resp
+			}
+
+			// Increase backoff for next iteration (exponential backoff)
+			backoff = min(backoff*2, maxRetryBackoff)
+		}
+
+		// Create new request for this attempt
+		req, err := http.NewRequestWithContext(ctx, originalReq.Method, target, bytes.NewReader(body))
+		if err != nil {
+			resp.Status = http.StatusInternalServerError
+			resp.Error = fmt.Sprintf("Failed to create request: %v", err)
+			return resp // Don't retry on request creation failures
+		}
+
+		// Clone headers
+		req.Header = cloneHeaders(originalReq.Header)
+
+		// Add retry attempt header for debugging
+		if attempts > 0 {
+			req.Header.Set("X-Retry-Count", strconv.Itoa(attempts))
+		}
+
+		// Send request
+		response, err = client.Do(req)
+
+		// Handle connection errors
+		if err != nil {
+			// Check if we should retry
+			if isRetryableError(err) && attempts < maxRetries {
+				attempts++
+				continue // Try again
+			}
+
+			resp.Status = http.StatusServiceUnavailable
+			resp.Error = fmt.Sprintf("Request failed: %v", err)
+			return resp
+		}
+
+		// Check status code for retry
+		if response.StatusCode >= 500 && attempts < maxRetries {
+			// Server error, try again
+			response.Body.Close() // Close body before retry
+			attempts++
+			continue
+		}
+
+		// Success or non-retryable status
+		break
 	}
 
-	// Clone headers
-	req.Header = cloneHeaders(originalReq.Header)
-
-	// Send request
-	response, err := client.Do(req)
-	if err != nil {
-		resp.Status = http.StatusServiceUnavailable
-		resp.Error = fmt.Sprintf("Request failed: %v", err)
-		return resp
+	// Track successful retries
+	if attempts > 0 && response != nil && response.StatusCode < 500 {
+		if metricsEnabled {
+			retrySuccess.WithLabelValues(target, strconv.Itoa(attempts)).Inc()
+		}
+		logAsync("Request succeeded after %d retries to %s", attempts, target)
 	}
+
 	defer response.Body.Close()
 
 	// Read response body
@@ -380,7 +482,39 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 
 	resp.Status = response.StatusCode
 	resp.Body = string(respBody)
+	resp.Attempts = attempts + 1 // Include original attempt
 	return resp
+}
+
+// Helper functions for retry mechanism
+func isRetryableError(err error) bool {
+	// Retry on network errors, timeouts, connection resets, etc.
+	if err == nil {
+		return false
+	}
+
+	// Check specific error types that should be retried
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "timeout") ||
+		strings.Contains(err.Error(), "connection reset") ||
+		strings.Contains(err.Error(), "no such host") {
+		return true
+	}
+
+	return false
+}
+
+func addJitter(d time.Duration) time.Duration {
+	// Add up to 20% random jitter
+	jitter := float64(d) * (0.8 + 0.4*rand.Float64())
+	return time.Duration(jitter)
+}
+
+func min(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // writeJSON writes JSON response with error handling
@@ -440,10 +574,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v)",
+	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v, Max Retries: %d)",
 		port,
 		endpointPath,
 		humanize.Bytes(uint64(maxBodySize)),
-		metricsEnabled)
+		metricsEnabled,
+		maxRetries)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

@@ -52,18 +52,6 @@ A high-performance HTTP request distributor that asynchronously fans out request
 
 ## Quick Start 🚦
 
-### Local Development
-
-```bash
-# Set required environment variables
-export TARGETS="https://service1.example.com,https://service2.example.com"
-export MAX_BODY_SIZE="10MB"
-export PORT=8080
-
-# Run the application
-go run fanout.go
-```
-
 ### Docker Deployment
 
 ```bash
@@ -74,7 +62,7 @@ docker pull ghcr.io/yourorg/fanout:latest
 docker run -p 8080:8080 \
   -e TARGETS="https://api1.example.com,https://api2.example.com" \
   -e MAX_BODY_SIZE="10MB" \
-  ghcr.io/yourorg/fanout:latest
+  ghcr.io/kingpin/fanout:latest
 ```
 
 ## Configuration ⚙️
@@ -85,22 +73,40 @@ docker run -p 8080:8080 \
 |----------|---------|-------------|
 | `TARGETS` | `""` (Required) | Comma-separated list of target URLs, or "localonly" for echo mode |
 | `PORT` | `8080` | Server port |
-| `MAX_BODY_SIZE` | `10MB` | Maximum request body size |
+| `MAX_BODY_SIZE` | `10MB` | Maximum request body size (human-readable format) |
 | `TZ` | `UTC` | Container timezone |
 | `ECHO_MODE_HEADER` | `false` | Add X-Echo-Mode header in echo responses |
 | `ECHO_MODE_RESPONSE` | `simple` | Echo response format (`simple` or `full`) |
 | `ENDPOINT_PATH` | `/fanout` | Configurable endpoint path |
-| `REQUEST_TIMEOUT` | `30s` | Global request timeout |
-| `CLIENT_TIMEOUT` | `10s` | Per-target timeout |
+| `REQUEST_TIMEOUT` | `30s` | Global request timeout (Go duration format) |
+| `CLIENT_TIMEOUT` | `10s` | Per-target timeout (Go duration format) |
 | `METRICS_ENABLED` | `false` | Enable Prometheus metrics endpoint |
+| `MAX_RETRIES` | `3` | Maximum number of retry attempts for failed requests |
+| `SENSITIVE_HEADERS` | `Authorization,Cookie` | Comma-separated list of headers that should trigger warnings |
 
 ### Example .env File
 
 ```
+# Core configuration
 TARGETS=https://analytics.service,https://audit.service
-ENDPOINT_PATH=/api/v1/fanout
-HTTP_TIMEOUT=15s
-SENSITIVE_HEADERS=Authorization,X-API-Key
+PORT=8080
+MAX_BODY_SIZE=10MB
+
+# Path and request handling
+ENDPOINT_PATH=/api/v1/fanout REQUEST_TIMEOUT=15s
+CLIENT_TIMEOUT=5s
+MAX_RETRIES=2
+
+# Security settings
+SENSITIVE_HEADERS=Authorization,Cookie,X-API-Key
+
+# Metrics and monitoring
+METRICS_ENABLED=true
+
+# Echo mode settings (for development)
+TARGETS=localonly
+ECHO_MODE_HEADER=true
+ECHO_MODE_RESPONSE=full
 ```
 
 ## Monitoring & Metrics 📊
@@ -113,6 +119,18 @@ FanOut provides built-in Prometheus metrics for real-time monitoring and alertin
 # Enable metrics endpoint
 export METRICS_ENABLED=true
 ```
+
+### Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `fanout_requests_total` | Counter | Total number of processed requests by path and method |
+| `fanout_target_requests_total` | Counter | Requests sent to targets by target URL and status |
+| `fanout_request_duration_seconds` | Histogram | Request latency distribution by target |
+| `fanout_active_requests` | Gauge | Number of requests currently being processed |
+| `fanout_request_body_size_bytes` | Histogram | Size of request bodies |
+| `fanout_retries_total` | Counter | Number of retry attempts by target and status |
+| `fanout_retry_success_total` | Counter | Number of successful requests after retry |
 
 ### Operating Modes
 
@@ -158,6 +176,7 @@ Content-Type: application/json
     "status": 200,
     "body": "...",
     "latency": "150ms"
+    "attempts": 2  // Total attempts including the initial request
   }
 ]
 ```
@@ -189,25 +208,6 @@ docker compose logs -f
 ```
 
 See [compose.yml](./compose.yml) for all available configuration options and environment variables.
-
-### Production Stack
-
-# docker-compose.prod.yml
-
-```yml
-services:
-  fanout:
-    image: ghcr.io/yourrepo/fanout:latest
-    ports:
-      - "8080:8080"
-    environment:
-      - TARGETS=https://primary.service,https://secondary.service
-    healthcheck:
-    test: ["CMD", "wget", "--spider", "http://localhost:8080/health"]
-    interval: 30s
-    timeout: 5s
-    retries: 3
-```
 
 ### Build Arguments
 
@@ -324,3 +324,6 @@ A: Tested with 500+ endpoints - scale horizontally for higher loads (needs new t
 
 **Q: How to secure sensitive data?**  
 A: Headers like Authorization are automatically filtered - configure others via env
+
+**Q: How are failed requests handled?**  
+A: FanOut uses smart retry logic with exponential backoff and jitter. Configure with MAX_RETRIES (default: 3). Only retries on server errors (5xx) and network issues.
