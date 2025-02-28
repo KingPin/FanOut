@@ -65,6 +65,14 @@ services:
       
       # Operational Settings
       - TZ=UTC                                                   # Optional: Container timezone (default: UTC)
+      
+      # OpenTelemetry Configuration
+      - OTEL_ENABLED=false                                      # Optional: Enable OpenTelemetry tracing (default: false)
+      - OTEL_SERVICE_NAME=fanout                                # Optional: Service name for telemetry (default: fanout)
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317         # Optional: OTLP endpoint (default: localhost:4317)
+      - OTEL_EXPORTER_OTLP_INSECURE=true                        # Optional: Use insecure connection (default: true)
+      - OTEL_TRACE_SAMPLING_RATIO=1.0                           # Optional: Sampling ratio 0.0-1.0 (default: 1.0)
+      - OTEL_PROPAGATORS=tracecontext,baggage                   # Optional: Context propagators (default: tracecontext,baggage)
 
     # Volume mounts (unused for now)
     #   - ./cofigs:/configs:ro                                 # Optional: Mount custom configurations
@@ -72,6 +80,17 @@ services:
     # Network configuration
     networks:
       - fanout-net
+
+  # OpenTelemetry Collector (optional, for local development)
+  otel-collector:
+    image: otel/opentelemetry-collector:0.70.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "55679:55679" # zpages extension
 
 # Define custom network
 networks:

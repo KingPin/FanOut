@@ -18,10 +18,24 @@ import (
 	"sync"
 	"time"
 
+	"os/signal"
+	"syscall"
+
 	"github.com/dustin/go-humanize" // Used for human-readable size parsing
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -120,6 +134,10 @@ var (
 		},
 		[]string{"target", "attempts"},
 	)
+
+	// OpenTelemetry configuration
+	otelEnabled bool
+	tracer      trace.Tracer
 )
 
 // init initializes the application settings.
@@ -200,6 +218,31 @@ func init() {
 
 	// Seed the random number generator
 	rand.Seed(time.Now().UnixNano())
+
+	// Check if OpenTelemetry is enabled
+	otelEnabled = strings.ToLower(os.Getenv("OTEL_ENABLED")) == "true"
+
+	// Initialize OpenTelemetry if enabled
+	if otelEnabled {
+		cleanup, err := initTracer()
+		if err != nil {
+			log.Printf("Failed to initialize OpenTelemetry: %v", err)
+			otelEnabled = false
+		} else {
+			// Register cleanup on exit
+			c := cleanup
+			go func() {
+				signals := make(chan os.Signal, 1)
+				signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+				<-signals
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := c(ctx); err != nil {
+					log.Printf("Failed to clean up OpenTelemetry: %v", err)
+				}
+			}()
+		}
+	}
 }
 
 // logAsync logs a message asynchronously to prevent blocking the request handler.
@@ -306,8 +349,20 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 		defer activeRequests.Dec()
 	}
 
+	// Get or create span context
+	ctx := r.Context()
+	var span trace.Span
+	if otelEnabled {
+		ctx, span = tracer.Start(ctx, "multiplex_fanout",
+			trace.WithAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.path", r.URL.Path),
+			))
+		defer span.End()
+	}
+
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
 	// Read and validate the request body
@@ -326,13 +381,31 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 	// Parse targets from environment
 	targets := strings.Split(os.Getenv("TARGETS"), ",")
 	if len(targets) == 0 || (len(targets) == 1 && targets[0] == "") {
+		if otelEnabled {
+			span.SetStatus(codes.Error, "No targets configured")
+			span.RecordError(fmt.Errorf("no targets configured"))
+		}
 		writeJSONError(w, "No targets configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: clientTimeout,
+	if otelEnabled {
+		span.SetAttributes(attribute.Int("fanout.targets.count", len(targets)))
+	}
+
+	// Create HTTP client with timeout and instrumentation
+	var client *http.Client
+	if otelEnabled {
+		client = &http.Client{
+			Timeout: clientTimeout,
+			Transport: otelhttp.NewTransport(
+				http.DefaultTransport,
+				otelhttp.WithPropagators(otel.GetTextMapPropagator())),
+		}
+	} else {
+		client = &http.Client{
+			Timeout: clientTimeout,
+		}
 	}
 
 	// Fan out requests
@@ -375,17 +448,47 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	resp := Response{Target: target}
 
 	startTime := time.Now()
+
+	// Create span for this target request
+	var span trace.Span
+	if otelEnabled {
+		ctx, span = tracer.Start(ctx, "fanout_target_request",
+			trace.WithAttributes(
+				attribute.String("target.url", target),
+				attribute.String("http.method", originalReq.Method),
+				attribute.Int("request.body.size", len(body)),
+			))
+		defer span.End()
+	}
+
 	defer func() {
+		// Record metrics and spans
 		if metricsEnabled {
 			duration := time.Since(startTime).Seconds()
 			requestDuration.WithLabelValues(target).Observe(duration)
 
-			// Record status with default of 0 for errors
 			status := strconv.Itoa(resp.Status)
 			if resp.Status == 0 && resp.Error != "" {
 				status = "error"
 			}
 			targetRequestsTotal.WithLabelValues(target, status).Inc()
+		}
+
+		if otelEnabled {
+			// Set span status based on response
+			if resp.Error != "" {
+				span.SetStatus(codes.Error, resp.Error)
+				span.RecordError(fmt.Errorf(resp.Error))
+			} else {
+				span.SetStatus(codes.Ok, "")
+			}
+
+			// Record response attributes
+			span.SetAttributes(
+				attribute.Int("http.status_code", resp.Status),
+				attribute.Int("fanout.attempts", resp.Attempts),
+				attribute.String("fanout.latency", resp.Latency.String()),
+			)
 		}
 	}()
 
@@ -543,15 +646,35 @@ func main() {
 
 	// Determine handler based on TARGETS environment variable
 	targets := os.Getenv("TARGETS")
+
+	var fanoutHandler http.Handler
 	if targets == "localonly" {
-		http.HandleFunc(endpointPath, echoHandler)
+		fanoutHandler = http.HandlerFunc(echoHandler)
 		log.Print("Running in ECHO MODE")
 	} else {
-		http.HandleFunc(endpointPath, multiplex) // multiplex function handles fan-out to multiple targets
+		fanoutHandler = http.HandlerFunc(multiplex)
 	}
 
-	// Add health check route
-	http.HandleFunc("/health", healthCheck)
+	// Wrap handlers with OpenTelemetry instrumentation if enabled
+	if otelEnabled {
+		fanoutHandler = otelhttp.NewHandler(
+			fanoutHandler,
+			"fanout_request",
+			otelhttp.WithMessageEvents(otelhttp.ReadEvents, otelhttp.WriteEvents),
+		)
+
+		// Also wrap health check handler
+		healthHandler := otelhttp.NewHandler(
+			http.HandlerFunc(healthCheck),
+			"health_check",
+		)
+		http.Handle("/health", healthHandler)
+	} else {
+		http.HandleFunc("/health", healthCheck)
+	}
+
+	// Register main handler
+	http.Handle(endpointPath, fanoutHandler)
 
 	// Add metrics endpoint if enabled
 	if metricsEnabled {
@@ -574,11 +697,123 @@ func main() {
 		os.Exit(0)
 	}
 
-	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v, Max Retries: %d)",
+	log.Printf("Server starting on :%s (Endpoint: %s, Max body: %s, Metrics: %v, Telemetry: %v, Max Retries: %d)",
 		port,
 		endpointPath,
 		humanize.Bytes(uint64(maxBodySize)),
 		metricsEnabled,
+		otelEnabled,
 		maxRetries)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+// Add an initTracer function to set up OpenTelemetry
+func initTracer() (func(context.Context) error, error) {
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "fanout"
+	}
+
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "localhost:4317" // Default OTLP endpoint
+	}
+
+	useInsecure := true
+	if insecureStr := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); insecureStr != "" {
+		useInsecure = strings.ToLower(insecureStr) != "false"
+	}
+
+	// Set up a connection to the collector
+	var secureOption grpc.DialOption
+	if useInsecure {
+		secureOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	} else {
+		secureOption = grpc.WithTransportCredentials(grpc.WithTransportCredentials())
+	}
+
+	// Create OTLP exporter
+	ctx := context.Background()
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(endpoint),
+		otlptracegrpc.WithDialOption(secureOption),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+	}
+
+	// Configure sampling rate
+	samplingRatio := 1.0 // Default to 100% sampling
+	if ratioStr := os.Getenv("OTEL_TRACE_SAMPLING_RATIO"); ratioStr != "" {
+		if ratio, err := strconv.ParseFloat(ratioStr, 64); err == nil {
+			if ratio >= 0 && ratio <= 1 {
+				samplingRatio = ratio
+			}
+		}
+	}
+
+	// Create resource with service information
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String(serviceName),
+			semconv.ServiceVersionKey.String("v1.0.0"),
+			attribute.String("environment", getEnvironment()),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+
+	// Configure trace provider
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(samplingRatio)),
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(tp)
+
+	// Configure propagators based on environment or use defaults
+	propagatorsEnv := os.Getenv("OTEL_PROPAGATORS")
+	if propagatorsEnv == "" {
+		propagatorsEnv = "tracecontext,baggage" // Default propagators
+	}
+
+	// Set up configured propagators
+	propagators := propagation.NewCompositeTextMapPropagator()
+	for _, p := range strings.Split(propagatorsEnv, ",") {
+		switch strings.ToLower(strings.TrimSpace(p)) {
+		case "tracecontext":
+			propagators = propagation.NewCompositeTextMapPropagator(
+				propagation.TraceContext{},
+				propagators,
+			)
+		case "baggage":
+			propagators = propagation.NewCompositeTextMapPropagator(
+				propagation.Baggage{},
+				propagators,
+			)
+		case "b3":
+			// If you need B3 format support, add the B3 propagator package and configure it here
+			logAsync("B3 propagation requested but not implemented")
+		}
+	}
+	otel.SetTextMapPropagator(propagators)
+
+	// Initialize tracer
+	tracer = otel.Tracer("fanout")
+
+	// Return a cleanup function
+	return func(ctx context.Context) error {
+		// Shutdown will flush any remaining spans and shut down the exporter
+		return tp.Shutdown(ctx)
+	}, nil
+}
+
+// Helper function to determine environment
+func getEnvironment() string {
+	env := os.Getenv("ENVIRONMENT")
+	if env == "" {
+		env = "production" // Default to production
+	}
+	return env
 }
