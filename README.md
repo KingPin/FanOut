@@ -299,7 +299,7 @@ We welcome contributions! Please follow these steps:
 
 ## License 📄
 
-MIT License
+[MIT License](https://github.com/KingPin/FanOut/blob/main/LICENSE)
 
 ## Security 🔒
 
