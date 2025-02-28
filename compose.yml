@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   fanout:
@@ -21,7 +20,7 @@ services:
     ports:
       - "8080:8080"
 
-    # Resource limits - Comment out if not needed
+    # Resource limits - Adjust based on workload requirements
     deploy:
       resources:
         limits:
@@ -31,7 +30,7 @@ services:
           cpus: '0.25'
           memory: 128M
 
-    # Health check configuration
+    # Health check configuration - Calls the built-in healthcheck endpoint
     healthcheck:
       test: ["CMD", "/fanout", "-healthcheck"]
       interval: 30s
@@ -41,7 +40,7 @@ services:
 
     # Environment variables
     environment:
-      # Required Settings
+      # Core Configuration
       - TARGETS=https://primary.service,https://secondary.service  # Required: Comma-separated target URLs or "localonly"
       - PORT=8080                                                 # Optional: Server port (default: 8080)
       
@@ -49,16 +48,26 @@ services:
       - MAX_BODY_SIZE=10MB                                       # Optional: Maximum request body size (default: 10MB)
       - REQUEST_TIMEOUT=30s                                      # Optional: Global request timeout (default: 30s)
       - CLIENT_TIMEOUT=10s                                       # Optional: Per-target timeout (default: 10s)
+      - MAX_RETRIES=3                                            # Optional: Maximum retry attempts for failed requests (default: 3)
+      
+      # Endpoint Configuration
+      - ENDPOINT_PATH=/fanout                                    # Optional: Custom endpoint path (default: /fanout)
       
       # Echo Mode Configuration
       - ECHO_MODE_HEADER=false                                   # Optional: Add diagnostic headers in echo mode
       - ECHO_MODE_RESPONSE=simple                                # Optional: Echo response format (simple/full)
+      
+      # Monitoring
+      - METRICS_ENABLED=true                                     # Optional: Enable Prometheus metrics endpoint
       
       # Security Settings
       - SENSITIVE_HEADERS=Authorization,X-API-Key                # Optional: Additional sensitive headers to monitor
       
       # Operational Settings
       - TZ=UTC                                                   # Optional: Container timezone (default: UTC)
+
+    # Volume mounts (unused for now)
+    #   - ./cofigs:/configs:ro                                 # Optional: Mount custom configurations
 
     # Network configuration
     networks:
