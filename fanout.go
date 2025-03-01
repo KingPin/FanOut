@@ -157,6 +157,11 @@ var (
 		LogLevelWarn:  "WARN",
 		LogLevelError: "ERROR",
 	}
+
+	// Version information
+	Version   = "dev"     // Set during build
+	GitCommit = "unknown" // Git SHA at build time
+	BuildTime = "unknown" // Build timestamp
 )
 
 // init initializes the application settings.
@@ -678,6 +683,16 @@ func writeJSONError(w http.ResponseWriter, message string, status int) {
 	writeJSON(w, map[string]string{"error": message})
 }
 
+// Version handler
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, map[string]string{
+		"version":    Version,
+		"git_commit": GitCommit,
+		"build_time": BuildTime,
+	})
+}
+
 // main is the entrypoint for the application.
 // Sets up HTTP routes and starts the server.
 func main() {
@@ -705,6 +720,9 @@ func main() {
 		log.Print("Metrics enabled at /metrics endpoint")
 	}
 
+	// Add version route
+	http.HandleFunc("/version", versionHandler)
+
 	// Determine port from environment or use default
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -717,6 +735,12 @@ func main() {
 		if err != nil || resp.StatusCode != http.StatusOK {
 			os.Exit(1)
 		}
+		os.Exit(0)
+	}
+
+	// Version mode - check args length first
+	if len(os.Args) > 1 && os.Args[1] == "-version" {
+		fmt.Printf("FanOut %s (commit: %s, built: %s)\n", Version, GitCommit, BuildTime)
 		os.Exit(0)
 	}
 
