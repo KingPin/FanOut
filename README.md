@@ -56,7 +56,7 @@ A high-performance HTTP request distributor that asynchronously fans out request
 
 ```bash
 # Pull the image
-docker pull ghcr.io/yourorg/fanout:latest
+docker pull ghcr.io/kingpin/fanout:latest
 
 # Run with configuration
 docker run -p 8080:8080 \
