@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # This is required for creating releases
+      packages: write  # This is needed if you're also pushing to GHCR
+
     steps:
       - name: Check out code
         uses: actions/checkout@v4
