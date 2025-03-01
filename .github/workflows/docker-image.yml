@@ -24,6 +24,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      - name: Run unit tests
+        run: |
+          go mod download
+          go test -v ./...
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
