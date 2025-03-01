@@ -154,14 +154,14 @@ func TestWriteJSON(t *testing.T) {
 		},
 		{
 			name: "Response object",
-			// Include the Attempts field explicitly to match JSON output expectations
 			data: Response{
 				Target:   "http://example.com",
 				Status:   200,
 				Body:     "OK",
-				Attempts: 0, // Explicitly set to 0 to ensure it appears in JSON
+				Attempts: 0, // Due to omitempty tag, this won't appear in JSON when 0
 			},
-			expected: `{"target":"http://example.com","status":200,"body":"OK","latency":0,"attempts":0}`,
+			// Updated expected value - removed attempts since it has omitempty tag
+			expected: `{"target":"http://example.com","status":200,"body":"OK","latency":0}`,
 		},
 	}
 
