@@ -28,6 +28,11 @@ jobs:
           echo "COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           # Generate build timestamp
           echo "TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+
+      - name: Run unit tests
+        run: |
+          go mod download
+          go test -v ./...
         
       - name: Build for multiple platforms
         run: |
