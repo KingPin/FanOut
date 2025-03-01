@@ -154,8 +154,13 @@ func TestWriteJSON(t *testing.T) {
 		},
 		{
 			name: "Response object",
-			data: Response{Target: "http://example.com", Status: 200, Body: "OK"},
-			// Updated to include latency and attempts fields
+			// Include the Attempts field explicitly to match JSON output expectations
+			data: Response{
+				Target:   "http://example.com",
+				Status:   200,
+				Body:     "OK",
+				Attempts: 0, // Explicitly set to 0 to ensure it appears in JSON
+			},
 			expected: `{"target":"http://example.com","status":200,"body":"OK","latency":0,"attempts":0}`,
 		},
 	}
