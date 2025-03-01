@@ -153,9 +153,10 @@ func TestWriteJSON(t *testing.T) {
 			expected: `{"key":"value"}`,
 		},
 		{
-			name:     "Response object",
-			data:     Response{Target: "http://example.com", Status: 200, Body: "OK"},
-			expected: `{"target":"http://example.com","status":200,"body":"OK"}`,
+			name: "Response object",
+			data: Response{Target: "http://example.com", Status: 200, Body: "OK"},
+			// Updated to include latency and attempts fields
+			expected: `{"target":"http://example.com","status":200,"body":"OK","latency":0,"attempts":0}`,
 		},
 	}
 

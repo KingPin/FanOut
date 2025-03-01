@@ -632,11 +632,14 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
+	errMsg := strings.ToLower(err.Error())
+
 	// Check specific error types that should be retried
-	if strings.Contains(err.Error(), "connection refused") ||
-		strings.Contains(err.Error(), "timeout") ||
-		strings.Contains(err.Error(), "connection reset") ||
-		strings.Contains(err.Error(), "no such host") {
+	if strings.Contains(errMsg, "connection refused") ||
+		strings.Contains(errMsg, "timeout") ||
+		strings.Contains(errMsg, "deadline exceeded") || // Added this line
+		strings.Contains(errMsg, "connection reset") ||
+		strings.Contains(errMsg, "no such host") {
 		return true
 	}
 
