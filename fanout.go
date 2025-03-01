@@ -336,11 +336,11 @@ func logAsync(format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 
 	if strings.HasPrefix(message, "ERROR") {
-		logError(message)
+		logError("%s", message)
 	} else if strings.HasPrefix(message, "WARNING") {
-		logWarn(message)
+		logWarn("%s", message)
 	} else {
-		logInfo(message)
+		logInfo("%s", message)
 	}
 }
 
@@ -410,7 +410,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 			"path":   r.URL.Path,
 			"remote": r.RemoteAddr,
 		},
-		"Echo request received with body length %d", len(bodyBytes))
+		"Echo request received with body length %d: %s", len(bodyBytes), loggedBody)
 }
 
 // healthCheck responds to HTTP requests with a health status.
