@@ -15,6 +15,11 @@ ENV GOOS=$TARGETOS \
     GOARCH=$TARGETARCH \
     CGO_ENABLED=0
 
+# Set build arguments for versioning
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
 # Copy only go.mod and go.sum first to leverage Docker cache
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +27,7 @@ RUN go mod download
 # Copy source code and build
 COPY . .
 RUN go build -trimpath \
-    -ldflags="-w -s" \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.GitCommit=${GIT_COMMIT} -X main.BuildTime=${BUILD_TIME}" \
     -o /app/fanout
 
 # Create fanout user structure

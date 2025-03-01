@@ -11,31 +11,42 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for proper versioning
 
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.21'  # Use Go 1.21 or later
+          go-version: '1.24'
 
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+      - name: Extract version info
+        id: version_info
+        run: |
+          # Extract version from tag (without 'v' prefix)
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          # Get commit hash
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          # Generate build timestamp
+          echo "TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
         
       - name: Build for multiple platforms
         run: |
           mkdir -p dist
+          FLAGS="-s -w -X main.Version=$VERSION -X main.GitCommit=$COMMIT -X main.BuildTime=$TIMESTAMP"
+          
           # Build for Linux (amd64)
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.Version=$VERSION" -o dist/fanout-linux-amd64
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$FLAGS" -o dist/fanout-linux-amd64
           # Build for Linux (arm64)
-          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.Version=$VERSION" -o dist/fanout-linux-arm64
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$FLAGS" -o dist/fanout-linux-arm64
           # Build for Linux (armv7)
-          GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w -X main.Version=$VERSION" -o dist/fanout-linux-armv7
+          GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$FLAGS" -o dist/fanout-linux-armv7
           # Build for macOS (amd64)
-          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.Version=$VERSION" -o dist/fanout-darwin-amd64
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="$FLAGS" -o dist/fanout-darwin-amd64
           # Build for macOS (arm64 - Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.Version=$VERSION" -o dist/fanout-darwin-arm64
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="$FLAGS" -o dist/fanout-darwin-arm64
           # Build for Windows
-          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.Version=$VERSION" -o dist/fanout-windows-amd64.exe
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$FLAGS" -o dist/fanout-windows-amd64.exe
+          
           # Create checksums
           cd dist && sha256sum * > checksums.txt
 
