@@ -2,6 +2,12 @@
 
 ![Go Version](https://img.shields.io/badge/go-1.24%2B-blue)
 ![Docker Ready](https://img.shields.io/badge/docker-ready-green)
+[![Code Coverage](https://img.shields.io/codecov/c/github/KingPin/FanOut/main)](https://codecov.io/gh/KingPin/FanOut)
+[![Last Commit](https://img.shields.io/github/last-commit/KingPin/FanOut)](https://github.com/KingPin/FanOut/commits/main)
+[![Go Report Card](https://goreportcard.com/badge/github.com/KingPin/FanOut)](https://goreportcard.com/report/github.com/KingPin/FanOut)
+[![License](https://img.shields.io/github/license/KingPin/FanOut)](https://github.com/KingPin/FanOut/blob/main/LICENSE)
+[![Issues](https://img.shields.io/github/issues/KingPin/FanOut)](https://github.com/KingPin/FanOut/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/KingPin/FanOut)](https://github.com/KingPin/FanOut/pulls)
 
 A high-performance HTTP request distributor that asynchronously fans out requests to multiple endpoints. Built for modern cloud-native architectures.
 
@@ -241,6 +247,9 @@ docker buildx build \
 3. **Circuit Manager**: Monitor endpoint health
 4. **Header Processor**: Filter and propagate headers
 5. **Metrics Collector**: Track performance indicators (WIP)
+
+### Request Flow
+```
 
 ## Development 🛠️
 
