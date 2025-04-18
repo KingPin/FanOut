@@ -88,7 +88,9 @@ docker run -p 8080:8080 \
 | `CLIENT_TIMEOUT` | `10s` | Per-target timeout (Go duration format) |
 | `METRICS_ENABLED` | `false` | Enable Prometheus metrics endpoint |
 | `MAX_RETRIES` | `3` | Maximum number of retry attempts for failed requests |
-| `SENSITIVE_HEADERS` | `Authorization,Cookie` | Comma-separated list of headers that should trigger warnings |
+| `SENSITIVE_HEADERS` | `Authorization,Cookie` | Comma-separated list of headers that should trigger warnings when detected and propagated |
+| `LOG_LEVEL` | `info` | Logging level (`debug`, `info`, `warn`, `error`) |
+| `LOG_FORMAT` | `text` | Logging format (`text` or `json`) |
 
 ### Example .env File
 
