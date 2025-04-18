@@ -527,15 +527,32 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		}
 
 		if attempts > 0 {
-			req.Header.Set("X-Retry-Count", strconv.Itoa(attempts))
+			logWarnWithContext(
+				map[string]string{
+					"target":  target,
+					"attempt": fmt.Sprintf("%d/%d", attempts, maxRetries),
+					"backoff": backoff.String(),
+					"error":   err.Error(),
+				},
+				"Retrying request",
+			)
+
+			select {
+			case <-time.After(addJitter(backoff)):
+			case <-ctx.Done():
+				resp.Status = http.StatusGatewayTimeout
+				resp.Error = fmt.Sprintf("Context cancelled during retry backoff: %v", ctx.Err())
+				logErrorWithContext(map[string]string{"target": target}, resp.Error)
+				return resp
+			}
+
+			backoff = min(backoff*2, maxRetryBackoff)
 		}
 
 		response, err = client.Do(req)
 
 		if err != nil {
 			if isRetryableError(err) && attempts < maxRetries {
-				logWarnWithContext(map[string]string{"target": target, "error": err.Error()},
-					"Retryable error on attempt %d", attempts+1)
 				attempts++
 				continue
 			}
@@ -547,8 +564,6 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		}
 
 		if response.StatusCode >= 500 && attempts < maxRetries {
-			logWarnWithContext(map[string]string{"target": target, "status": strconv.Itoa(response.StatusCode)},
-				"Retryable status code %d on attempt %d", response.StatusCode, attempts+1)
 			response.Body.Close()
 			attempts++
 			continue
