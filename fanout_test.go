@@ -387,7 +387,7 @@ func TestSendRequest(t *testing.T) {
 	maxRetries = 2
 
 	// Call sendRequest with mock server URL
-	resp := sendRequest(context.Background(), client, server.URL, req, nil)
+	resp := sendRequest(context.Background(), client, server.URL, req, req.GetBody, nil)
 
 	// Verify response
 	if resp.Status != http.StatusOK {
@@ -420,7 +420,7 @@ func TestSendRequestNetworkError(t *testing.T) {
 	maxRetries = 1
 
 	// Call sendRequest with a non-existent endpoint (will cause error)
-	resp := sendRequest(context.Background(), client, "http://nonexistent.example", req, nil)
+	resp := sendRequest(context.Background(), client, "http://nonexistent.example", req, req.GetBody, nil)
 
 	// Verify response reports an error
 	if resp.Status != http.StatusServiceUnavailable {
