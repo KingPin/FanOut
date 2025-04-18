@@ -2,7 +2,6 @@ name: Docker Image CI
 
 on:
   push:
-    # branches: [ "main" ]
     tags:
       - 'v*'  # Trigger on any tag starting with 'v'
     paths:
@@ -10,7 +9,6 @@ on:
       - 'go.mod'       # Dependencies
       - 'go.sum'       # Dependency checksums
       - 'Dockerfile'   # Docker build instructions
-      - 'docker/**'    # Docker-related files
   pull_request:
     # branches: [ "main" ]
     paths:
@@ -18,7 +16,6 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Dockerfile'
-      - 'docker/**'
   workflow_dispatch:
 
 env:
