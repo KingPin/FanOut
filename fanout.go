@@ -193,12 +193,12 @@ func init() {
 	} else {
 		size, err := humanize.ParseBytes(sizeStr)
 		if err != nil {
-			log.Printf("Invalid MAX_BODY_SIZE '%s', using default: %v", sizeStr, err)
+			log.Printf("Invalid MAX_BODY_SIZE, using default: %v", sizeStr, err)
 			maxBodySize = defaultMaxBodySize
 		} else {
 			// humanize.ParseBytes returns uint64; guard against overflow when converting to int64
 			if size > uint64(^uint64(0)>>1) {
-				log.Printf("MAX_BODY_SIZE '%s' too large, capping to default: %d", sizeStr, defaultMaxBodySize)
+				log.Printf("MAX_BODY_SIZE too large, capping to default: %d", sizeStr, defaultMaxBodySize)
 				maxBodySize = defaultMaxBodySize
 			} else {
 				maxBodySize = int64(size)
@@ -208,7 +208,7 @@ func init() {
 
 	if timeout := os.Getenv("REQUEST_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err != nil {
-			log.Printf("Invalid REQUEST_TIMEOUT '%s', using default: %v", timeout, err)
+			log.Printf("Invalid REQUEST_TIMEOUT, using default: %v", timeout, err)
 			requestTimeout = defaultRequestTimeout
 		} else {
 			requestTimeout = d
@@ -219,7 +219,7 @@ func init() {
 
 	if timeout := os.Getenv("CLIENT_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err != nil {
-			log.Printf("Invalid CLIENT_TIMEOUT '%s', using default: %v", timeout, err)
+			log.Printf("Invalid CLIENT_TIMEOUT, using default: %v", timeout, err)
 			clientTimeout = defaultClientTimeout
 		} else {
 			clientTimeout = d
@@ -263,7 +263,7 @@ func init() {
 
 	if retriesStr := os.Getenv("MAX_RETRIES"); retriesStr != "" {
 		if retries, err := strconv.Atoi(retriesStr); err != nil || retries < 0 {
-			log.Printf("Invalid MAX_RETRIES '%s', using default: %v", retriesStr, err)
+			log.Printf("Invalid MAX_RETRIES, using default: %v", retriesStr, err)
 			maxRetries = defaultMaxRetries
 		} else {
 			maxRetries = retries
@@ -323,7 +323,8 @@ func logWithLevel(level int, context map[string]string, format string, args ...i
 	case logQueue <- entry:
 	default:
 		if level >= LogLevelError {
-			log.Printf("WARNING: Log queue full, logging ERROR directly: %s", entry.Message)
+			// Avoid logging untrusted message contents directly to prevent log injection (gosec G706)
+			log.Printf("WARNING: Log queue full, logging ERROR directly")
 		}
 	}
 }
@@ -360,10 +361,16 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	switch os.Getenv("ECHO_MODE_RESPONSE") {
 	case "full":
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(echoData)
+		if err := json.NewEncoder(w).Encode(echoData); err != nil {
+			logError("Failed to encode echo response: %v", err)
+			return
+		}
 	default:
 		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]string{"status": "echoed"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "echoed"}); err != nil {
+			logError("Failed to encode echo short response: %v", err)
+			return
+		}
 	}
 
 	loggedBody := string(bodyBytes)
@@ -381,7 +388,9 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "healthy"}); err != nil {
+		logError("Failed to encode health response: %v", err)
+	}
 }
 
 type Response struct {
@@ -418,7 +427,9 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 	// into memory up to maxBodySize so retries can recreate the body safely.
 	if getBody == nil {
 		bodyBytes, readErr = io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
-		r.Body.Close()
+			if err := r.Body.Close(); err != nil {
+				logWarn("Failed to close request body after read: %v", err)
+			}
 		if readErr != nil {
 			logError("Error reading request body: %v", readErr)
 			writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
@@ -443,7 +454,9 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bodyBytes, readErr = io.ReadAll(io.LimitReader(bodyReader, maxBodySize+1))
-		bodyReader.Close()
+			if err := bodyReader.Close(); err != nil {
+				logWarn("Failed to close body reader after size check: %v", err)
+			}
 
 		if readErr != nil {
 			logError("Error reading body for size check: %v", readErr)
