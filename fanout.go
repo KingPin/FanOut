@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -779,9 +780,15 @@ func main() {
 		os.Exit(0)
 	}
 
+	var displayMaxBody uint64
+	if maxBodySize < 0 {
+		displayMaxBody = 0
+	} else {
+		displayMaxBody = uint64(maxBodySize)
+	}
 	logInfo("Server starting on :%s (Max body: %s, Request Timeout: %s, Client Timeout: %s, Max Retries: %d)",
 		port,
-		humanize.Bytes(uint64(maxBodySize)),
+		humanize.Bytes(displayMaxBody),
 		requestTimeout,
 		clientTimeout,
 		maxRetries)
