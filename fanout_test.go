@@ -420,7 +420,7 @@ func TestSendRequestNetworkError(t *testing.T) {
 	maxRetries = 1
 
 	// Call sendRequest with a non-existent endpoint (will cause error)
-	resp := sendRequest(context.Background(), client, "http://nonexistent.example", req, req.GetBody, nil)
+	resp := sendRequest(context.Background(), client, "http://127.0.0.1:1", req, req.GetBody, nil)
 
 	// Verify response reports an error
 	if resp.Status != http.StatusServiceUnavailable {
