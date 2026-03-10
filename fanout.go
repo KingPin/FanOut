@@ -193,12 +193,12 @@ func init() {
 	} else {
 		size, err := humanize.ParseBytes(sizeStr)
 		if err != nil {
-			log.Printf("Invalid MAX_BODY_SIZE, using default: %v", sizeStr, err)
+			log.Printf("Invalid MAX_BODY_SIZE, using default")
 			maxBodySize = defaultMaxBodySize
 		} else {
 			// humanize.ParseBytes returns uint64; guard against overflow when converting to int64
 			if size > uint64(^uint64(0)>>1) {
-				log.Printf("MAX_BODY_SIZE too large, capping to default: %d", sizeStr, defaultMaxBodySize)
+				log.Printf("MAX_BODY_SIZE too large, capping to default: %d", defaultMaxBodySize)
 				maxBodySize = defaultMaxBodySize
 			} else {
 				maxBodySize = int64(size)
@@ -208,7 +208,7 @@ func init() {
 
 	if timeout := os.Getenv("REQUEST_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err != nil {
-			log.Printf("Invalid REQUEST_TIMEOUT, using default: %v", timeout, err)
+			log.Printf("Invalid REQUEST_TIMEOUT, using default")
 			requestTimeout = defaultRequestTimeout
 		} else {
 			requestTimeout = d
@@ -219,7 +219,7 @@ func init() {
 
 	if timeout := os.Getenv("CLIENT_TIMEOUT"); timeout != "" {
 		if d, err := time.ParseDuration(timeout); err != nil {
-			log.Printf("Invalid CLIENT_TIMEOUT, using default: %v", timeout, err)
+			log.Printf("Invalid CLIENT_TIMEOUT, using default")
 			clientTimeout = defaultClientTimeout
 		} else {
 			clientTimeout = d
@@ -263,7 +263,7 @@ func init() {
 
 	if retriesStr := os.Getenv("MAX_RETRIES"); retriesStr != "" {
 		if retries, err := strconv.Atoi(retriesStr); err != nil || retries < 0 {
-			log.Printf("Invalid MAX_RETRIES, using default: %v", retriesStr, err)
+			log.Printf("Invalid MAX_RETRIES, using default")
 			maxRetries = defaultMaxRetries
 		} else {
 			maxRetries = retries
@@ -576,7 +576,11 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
 			resp.Error = fmt.Sprintf("Failed to create request: %v", err)
-			bodyReader.Close()
+			if bodyReader != nil {
+				if cerr := bodyReader.Close(); cerr != nil {
+					logWarn("Failed to close body reader after request creation: %v", cerr)
+				}
+			}
 			logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
 			return resp
 		}
@@ -607,7 +611,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 				)
 				// If a response object was returned alongside the error, close it and discard
 				if response != nil {
-					response.Body.Close()
+					if cerr := response.Body.Close(); cerr != nil {
+						logWarn("Failed to close response body after network error: %v", cerr)
+					}
 					response = nil
 				}
 				attempts++
@@ -630,7 +636,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 				},
 				"Server error status, retrying request",
 			)
-			response.Body.Close()
+			if cerr := response.Body.Close(); cerr != nil {
+				logWarn("Failed to close response body after server error: %v", cerr)
+			}
 			attempts++
 			continue
 		}
@@ -743,16 +751,22 @@ func writeJSON(w http.ResponseWriter, v interface{}) error {
 func writeJSONError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	writeJSON(w, map[string]string{"error": message})
+	if err := writeJSON(w, map[string]string{"error": message}); err != nil {
+		logError("Failed to write JSON error response: %v", err)
+	}
+
 }
 
 func versionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]string{
-		"version":    Version,
-		"git_commit": GitCommit,
-		"build_time": BuildTime,
-	})
+	if err := writeJSON(w, map[string]string{
+			"version":    Version,
+			"git_commit": GitCommit,
+			"build_time": BuildTime,
+		}); err != nil {
+			logError("Failed to write version response: %v", err)
+		}
+
 }
 
 func main() {
