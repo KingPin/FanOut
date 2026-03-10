@@ -490,7 +490,6 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		}
 	}()
 
-	var err error
 	var response *http.Response
 	attempts := 0
 	backoff := initialRetryBackoff
@@ -502,7 +501,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			case <-ctx.Done():
 				resp.Status = http.StatusGatewayTimeout
 				resp.Error = fmt.Sprintf("Context cancelled during retry backoff: %v", ctx.Err())
-				logErrorWithContext(map[string]string{"target": target}, resp.Error)
+				logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
 				return resp
 			}
 			backoff = min(backoff*2, maxRetryBackoff)
@@ -512,13 +511,18 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		if len(preReadBody) > 0 && attempts == 0 {
 			bodyReader = io.NopCloser(bytes.NewReader(preReadBody))
 		} else {
-			var getBodyErr error
-			bodyReader, getBodyErr = getBody()
-			if getBodyErr != nil {
-				resp.Status = http.StatusInternalServerError
-				resp.Error = fmt.Sprintf("Failed to get request body for attempt %d: %v", attempts+1, getBodyErr)
-				logErrorWithContext(map[string]string{"target": target}, resp.Error)
-				return resp
+			if getBody == nil {
+				// No GetBody available and no preReadBody: use nil body (safe for methods without body)
+				bodyReader = nil
+			} else {
+				var getBodyErr error
+				bodyReader, getBodyErr = getBody()
+				if getBodyErr != nil {
+					resp.Status = http.StatusInternalServerError
+					resp.Error = fmt.Sprintf("Failed to get request body for attempt %d: %v", attempts+1, getBodyErr)
+					logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
+					return resp
+				}
 			}
 		}
 
@@ -527,7 +531,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			resp.Status = http.StatusInternalServerError
 			resp.Error = fmt.Sprintf("Failed to create request: %v", err)
 			bodyReader.Close()
-			logErrorWithContext(map[string]string{"target": target}, resp.Error)
+			logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
 			return resp
 		}
 
@@ -555,13 +559,18 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 					},
 					"Network error, retrying request",
 				)
+				// If a response object was returned alongside the error, close it and discard
+				if response != nil {
+					response.Body.Close()
+					response = nil
+				}
 				attempts++
 				continue
 			}
 
 			resp.Status = http.StatusServiceUnavailable
 			resp.Error = fmt.Sprintf("Request failed after %d attempts: %v", attempts+1, err)
-			logErrorWithContext(map[string]string{"target": target}, resp.Error)
+			logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
 			return resp
 		}
 
@@ -586,7 +595,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	if response == nil {
 		resp.Status = http.StatusServiceUnavailable
 		resp.Error = fmt.Sprintf("Request failed after %d attempts (no response received)", attempts+1)
-		logErrorWithContext(map[string]string{"target": target}, resp.Error)
+		logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
 		return resp
 	}
 	defer response.Body.Close()
@@ -595,7 +604,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	if readErr != nil {
 		resp.Status = http.StatusInternalServerError
 		resp.Error = fmt.Sprintf("Failed to read response body: %v", readErr)
-		logErrorWithContext(map[string]string{"target": target, "status": strconv.Itoa(response.StatusCode)}, resp.Error)
+		logErrorWithContext(map[string]string{"target": target, "status": strconv.Itoa(response.StatusCode)}, "%s", resp.Error)
 		if response.StatusCode != 0 {
 			resp.Status = response.StatusCode
 		}
