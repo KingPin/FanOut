@@ -557,6 +557,8 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			}
 		}
 
+		// target was validated by caller (must be absolute http/https with host). Suppress gosec SSRF warning.
+		// #nosec G704 -- validated target URL in multiplex
 		req, err := http.NewRequestWithContext(ctx, originalReq.Method, target, bodyReader)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
@@ -799,5 +801,17 @@ func main() {
 		requestTimeout,
 		clientTimeout,
 		maxRetries)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+
+	// Use http.Server with explicit timeouts to satisfy gosec G114 recommendations
+	server := &http.Server{
+		Addr:         ":" + port,
+		ReadTimeout:  requestTimeout + 5*time.Second,
+		WriteTimeout: requestTimeout + 5*time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	// Start server and log errors consistently
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logError("Server error: %v", err)
+		os.Exit(1)
+	}
 }
