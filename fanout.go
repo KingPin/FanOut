@@ -577,7 +577,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			req.Header.Set("X-Retry-Count", strconv.Itoa(attempts))
 		}
 
-		response, err = client.Do(req)
+		response, err = client.Do(req) // #nosec G704 -- target validated by caller
 
 		if err != nil {
 			if isRetryableError(err) && attempts < maxRetries {
@@ -701,7 +701,9 @@ func isRetryableError(err error) bool {
 }
 
 func addJitter(d time.Duration) time.Duration {
-	jitter := float64(d) * (0.8 + 0.4*rand.Float64())
+	// Non-crypto randomness is acceptable for backoff jitter.
+	// #nosec G404 -- math/rand is sufficient for jitter in retry backoff
+	jitter := float64(d) * (0.8 + 0.4*rand.Float64()) // #nosec G404
 	return time.Duration(jitter)
 }
 
