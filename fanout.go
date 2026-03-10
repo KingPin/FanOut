@@ -196,7 +196,13 @@ func init() {
 			log.Printf("Invalid MAX_BODY_SIZE '%s', using default: %v", sizeStr, err)
 			maxBodySize = defaultMaxBodySize
 		} else {
-			maxBodySize = int64(size)
+			// humanize.ParseBytes returns uint64; guard against overflow when converting to int64
+			if size > uint64(^uint64(0)>>1) {
+				log.Printf("MAX_BODY_SIZE '%s' too large, capping to default: %d", sizeStr, defaultMaxBodySize)
+				maxBodySize = defaultMaxBodySize
+			} else {
+				maxBodySize = int64(size)
+			}
 		}
 	}
 
