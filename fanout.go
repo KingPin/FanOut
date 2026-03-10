@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -404,7 +407,29 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 
 	var bodyBytes []byte
 	var readErr error
-	if r.ContentLength <= 0 {
+
+	// If GetBody is not available (e.g., streaming request), pre-read the body
+	// into memory up to maxBodySize so retries can recreate the body safely.
+	if getBody == nil {
+		bodyBytes, readErr = io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
+		r.Body.Close()
+		if readErr != nil {
+			logError("Error reading request body: %v", readErr)
+			writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+		if int64(len(bodyBytes)) > maxBodySize {
+			logError("Request body size exceeds limit (%d bytes read)", len(bodyBytes))
+			writeJSONError(w, "Payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		// Provide a GetBody closure for retries
+		getBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+	} else if r.ContentLength <= 0 {
+		// When ContentLength is unknown but GetBody exists, use it to perform a size check
 		bodyReader, err := getBody()
 		if err != nil {
 			logError("Failed to get request body reader: %v", err)
@@ -633,8 +658,31 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
-	errMsg := strings.ToLower(err.Error())
+	// Prefer typed checks for net errors and url errors
+	var nerr net.Error
+	if errors.As(err, &nerr) {
+		if nerr.Timeout() || nerr.Temporary() {
+			return true
+		}
+	}
 
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		// If the wrapped error is a net.Error with timeout/temporary, treat as retryable
+		var innerNetErr net.Error
+		if errors.As(ue.Err, &innerNetErr) {
+			if innerNetErr.Timeout() || innerNetErr.Temporary() {
+				return true
+			}
+		}
+		// Some url.Errors include "timeout" in the string; treat as retryable
+		if ue.Timeout() {
+			return true
+		}
+	}
+
+	// Fallback: substring matching for common transient messages
+	errMsg := strings.ToLower(err.Error())
 	if strings.Contains(errMsg, "connection refused") ||
 		strings.Contains(errMsg, "timeout") ||
 		strings.Contains(errMsg, "deadline exceeded") ||
