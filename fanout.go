@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -413,13 +414,26 @@ func healthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Response holds the result of a single fan-out request to one target.
+// Latency is expressed in seconds as a float64 for easy consumption.
 type Response struct {
-	Target   string        `json:"target"`
-	Status   int           `json:"status"`
-	Body     string        `json:"body,omitempty"`
-	Error    string        `json:"error,omitempty"`
-	Latency  time.Duration `json:"latency"`
-	Attempts int           `json:"attempts,omitempty"`
+	Target    string  `json:"target"`
+	Status    int     `json:"status"`
+	Body      string  `json:"body,omitempty"`
+	Error     string  `json:"error,omitempty"`
+	Latency   float64 `json:"latency_seconds"`
+	Attempts  int     `json:"attempts,omitempty"`
+	Truncated bool    `json:"truncated,omitempty"`
+}
+
+// generateRequestID returns a UUID v4-like hex string using crypto/rand.
+// Falls back to a timestamp string if the random source fails.
+func generateRequestID() string {
+	b := make([]byte, 16)
+	if _, err := cryptorand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 func multiplex(w http.ResponseWriter, r *http.Request) {
@@ -437,6 +451,14 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+
+	// Set or generate X-Request-ID for correlation across all fan-out targets.
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = generateRequestID()
+		r.Header.Set("X-Request-ID", requestID)
+	}
+	w.Header().Set("X-Request-ID", requestID)
 
 	getBody := r.GetBody
 
@@ -491,38 +513,34 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, "Payload too large", http.StatusRequestEntityTooLarge)
 			return
 		}
+		if metricsEnabled {
+			bodySize.WithLabelValues(r.URL.Path).Observe(float64(len(bodyBytes)))
+		}
 	} else {
 		if metricsEnabled {
 			bodySize.WithLabelValues(r.URL.Path).Observe(float64(r.ContentLength))
 		}
 	}
 
-	targetsEnv := os.Getenv("TARGETS")
-	targets := strings.Split(targetsEnv, ",")
-	if len(targets) == 0 || (len(targets) == 1 && targets[0] == "") {
+	if len(configuredTargets) == 0 {
 		logError("No targets configured (TARGETS env var is empty or not set)")
 		writeJSONError(w, "No targets configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	responses := make([]Response, 0, len(targets))
+	responses := make([]Response, 0, len(configuredTargets))
 	var wg sync.WaitGroup
-	respChan := make(chan Response, len(targets))
+	respChan := make(chan Response, len(configuredTargets))
 
-	for _, target := range targets {
-		targetURL := strings.TrimSpace(target)
-		if targetURL == "" {
-			logWarn("Skipping empty target URL found in TARGETS list")
-			continue
-		}
+	for _, target := range configuredTargets {
 		wg.Add(1)
 		go func(target string) {
 			defer wg.Done()
 			start := time.Now()
 			resp := sendRequest(ctx, httpClient, target, r, getBody, bodyBytes)
-			resp.Latency = time.Since(start)
+			resp.Latency = time.Since(start).Seconds()
 			respChan <- resp
-		}(targetURL)
+		}(target)
 	}
 
 	go func() {
@@ -692,12 +710,18 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	resp.Body = string(respBody)
 	resp.Attempts = attempts + 1
 
+	// Warn if the response body was silently capped at maxBodySize.
+	if int64(len(respBody)) == maxBodySize {
+		resp.Truncated = true
+		logWarnWithContext(map[string]string{"target": target}, "Response body truncated at limit (%d bytes)", maxBodySize)
+	}
+
 	logDebugWithContext(
 		map[string]string{
 			"target":   target,
 			"status":   strconv.Itoa(resp.Status),
 			"attempts": strconv.Itoa(resp.Attempts),
-			"latency":  resp.Latency.String(),
+			"latency":  time.Since(startTime).String(),
 		},
 		"Request completed successfully",
 	)
