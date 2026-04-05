@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +70,13 @@ var (
 	endpointPath     string
 	metricsEnabled   bool
 	httpClient       *http.Client
+
+	// configuredTargets holds the parsed TARGETS list, populated at startup.
+	configuredTargets []string
+
+	// echoModeHeader and echoModeResponse cache ECHO_MODE_* env vars.
+	echoModeHeader   bool
+	echoModeResponse string
 
 	requestsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -167,6 +175,7 @@ func init() {
 						for k, v := range entry.Context {
 							parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 						}
+						sort.Strings(parts)
 						contextStr = " " + strings.Join(parts, " ")
 					}
 					log.Printf("[%s]%s %s", entry.Level, contextStr, entry.Message)
@@ -272,7 +281,18 @@ func init() {
 		maxRetries = defaultMaxRetries
 	}
 
-	rand.Seed(time.Now().UnixNano())
+	// Cache TARGETS at startup to avoid per-request env reads.
+	if t := os.Getenv("TARGETS"); t != "" && t != "localonly" {
+		for _, u := range strings.Split(t, ",") {
+			if trimmed := strings.TrimSpace(u); trimmed != "" {
+				configuredTargets = append(configuredTargets, trimmed)
+			}
+		}
+	}
+
+	// Cache echo mode config.
+	echoModeHeader = strings.ToLower(os.Getenv("ECHO_MODE_HEADER")) == "true"
+	echoModeResponse = strings.ToLower(os.Getenv("ECHO_MODE_RESPONSE"))
 }
 
 func logDebug(format string, args ...interface{}) {
@@ -333,7 +353,7 @@ func cloneHeaders(original http.Header) http.Header {
 	cloned := make(http.Header)
 	for k, vv := range original {
 		if sensitiveHeaders[http.CanonicalHeaderKey(k)] {
-			logWarn("Sensitive header detected and propagated: %s", k)
+			logDebug("Sensitive header detected and forwarded: %s", k)
 		}
 		cloned[k] = vv
 	}
@@ -354,11 +374,11 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 		"body":    string(bodyBytes),
 	}
 
-	if os.Getenv("ECHO_MODE_HEADER") == "true" {
+	if echoModeHeader {
 		w.Header().Set("X-Echo-Mode", "active")
 	}
 
-	switch os.Getenv("ECHO_MODE_RESPONSE") {
+	switch echoModeResponse {
 	case "full":
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(echoData); err != nil {
@@ -427,9 +447,9 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 	// into memory up to maxBodySize so retries can recreate the body safely.
 	if getBody == nil {
 		bodyBytes, readErr = io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
-			if err := r.Body.Close(); err != nil {
-				logWarn("Failed to close request body after read: %v", err)
-			}
+		if err := r.Body.Close(); err != nil {
+			logWarn("Failed to close request body after read: %v", err)
+		}
 		if readErr != nil {
 			logError("Error reading request body: %v", readErr)
 			writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
@@ -439,6 +459,9 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 			logError("Request body size exceeds limit (%d bytes read)", len(bodyBytes))
 			writeJSONError(w, "Payload too large", http.StatusRequestEntityTooLarge)
 			return
+		}
+		if metricsEnabled {
+			bodySize.WithLabelValues(r.URL.Path).Observe(float64(len(bodyBytes)))
 		}
 
 		// Provide a GetBody closure for retries
@@ -454,9 +477,9 @@ func multiplex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bodyBytes, readErr = io.ReadAll(io.LimitReader(bodyReader, maxBodySize+1))
-			if err := bodyReader.Close(); err != nil {
-				logWarn("Failed to close body reader after size check: %v", err)
-			}
+		if err := bodyReader.Close(); err != nil {
+			logWarn("Failed to close body reader after size check: %v", err)
+		}
 
 		if readErr != nil {
 			logError("Error reading body for size check: %v", readErr)
@@ -648,7 +671,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 
 	if response == nil {
 		resp.Status = http.StatusServiceUnavailable
-		resp.Error = fmt.Sprintf("Request failed after %d attempts (no response received)", attempts+1)
+		resp.Error = fmt.Sprintf("Request failed after %d attempts (no response received)", attempts)
 		logErrorWithContext(map[string]string{"target": target}, "%s", resp.Error)
 		return resp
 	}
