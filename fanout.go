@@ -782,22 +782,40 @@ func writeJSONError(w http.ResponseWriter, message string, status int) {
 	if err := writeJSON(w, map[string]string{"error": message}); err != nil {
 		logError("Failed to write JSON error response: %v", err)
 	}
-
 }
 
 func versionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := writeJSON(w, map[string]string{
-			"version":    Version,
-			"git_commit": GitCommit,
-			"build_time": BuildTime,
-		}); err != nil {
-			logError("Failed to write version response: %v", err)
-		}
-
+		"version":    Version,
+		"git_commit": GitCommit,
+		"build_time": BuildTime,
+	}); err != nil {
+		logError("Failed to write version response: %v", err)
+	}
 }
 
 func main() {
+	// Handle CLI flags before any server setup so they run cleanly without side effects.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-version":
+			fmt.Printf("FanOut %s (commit: %s, built: %s)\n", Version, GitCommit, BuildTime)
+			os.Exit(0)
+		case "-healthcheck":
+			port := os.Getenv("PORT")
+			if port == "" {
+				port = "8080"
+			}
+			// #nosec G107 -- localhost-only health probe, port sourced from env
+			resp, err := http.Get("http://localhost:" + port + "/health")
+			if err != nil || resp.StatusCode != http.StatusOK {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+
 	log.SetOutput(os.Stdout)
 
 	logInfo("Starting FanOut service version %s (commit: %s, built: %s)", Version, GitCommit, BuildTime)
@@ -808,19 +826,12 @@ func main() {
 		http.HandleFunc(endpointPath, echoHandler)
 		logInfo("Running in ECHO MODE (Endpoint: %s)", endpointPath)
 	} else {
-		targetList := strings.Split(targets, ",")
-		validTargets := 0
-		for _, t := range targetList {
-			if strings.TrimSpace(t) != "" {
-				validTargets++
-			}
-		}
-		if validTargets == 0 {
+		if len(configuredTargets) == 0 {
 			logError("FATAL: No valid target URLs configured in TARGETS environment variable.")
 			os.Exit(1)
 		}
 		http.HandleFunc(endpointPath, multiplex)
-		logInfo("Running in MULTIPLEX MODE (Endpoint: %s) with %d targets", endpointPath, validTargets)
+		logInfo("Running in MULTIPLEX MODE (Endpoint: %s) with %d targets", endpointPath, len(configuredTargets))
 	}
 
 	http.HandleFunc("/health", healthCheck)
@@ -837,11 +848,6 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
-	}
-
-	if len(os.Args) > 1 && os.Args[1] == "-version" {
-		fmt.Printf("FanOut %s (commit: %s, built: %s)\n", Version, GitCommit, BuildTime)
-		os.Exit(0)
 	}
 
 	var displayMaxBody uint64
