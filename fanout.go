@@ -687,27 +687,16 @@ func isRetryableError(err error) bool {
 		return false
 	}
 
-	// Prefer typed checks for net errors and url errors
+	// Prefer typed checks for net errors and url errors.
+	// Note: net.Error.Temporary() is deprecated since Go 1.18 and intentionally omitted.
 	var nerr net.Error
-	if errors.As(err, &nerr) {
-		if nerr.Timeout() || nerr.Temporary() {
-			return true
-		}
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return true
 	}
 
 	var ue *url.Error
-	if errors.As(err, &ue) {
-		// If the wrapped error is a net.Error with timeout/temporary, treat as retryable
-		var innerNetErr net.Error
-		if errors.As(ue.Err, &innerNetErr) {
-			if innerNetErr.Timeout() || innerNetErr.Temporary() {
-				return true
-			}
-		}
-		// Some url.Errors include "timeout" in the string; treat as retryable
-		if ue.Timeout() {
-			return true
-		}
+	if errors.As(err, &ue) && ue.Timeout() {
+		return true
 	}
 
 	// Fallback: substring matching for common transient messages
@@ -730,18 +719,10 @@ func addJitter(d time.Duration) time.Duration {
 	return time.Duration(jitter)
 }
 
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func writeJSON(w http.ResponseWriter, v interface{}) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(v); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
 		logError("Error encoding JSON: %v", err)
 		return err
 	}
