@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
 	"testing"
 )
 
@@ -18,14 +18,15 @@ func TestMultiplexNoGetBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Set TARGETS to the mock server
-	origTargets := os.Getenv("TARGETS")
-	defer os.Setenv("TARGETS", origTargets)
-	os.Setenv("TARGETS", server.URL)
+	// Set configuredTargets directly (TARGETS env var is cached at init time, not per-request)
+	origTargets := configuredTargets
+	defer func() { configuredTargets = origTargets }()
+	configuredTargets = []string{server.URL}
 
-	// Create a request WITHOUT GetBody (http.NewRequest leaves GetBody nil)
-	body := []byte("hello")
-	req, err := http.NewRequest("POST", "/fanout", bytes.NewReader(body))
+	// http.NewRequest sets GetBody automatically for *bytes.Reader / *bytes.Buffer.
+	// Wrap in io.NopCloser so the body is a plain io.ReadCloser and GetBody stays nil,
+	// which forces multiplex into the pre-read code path.
+	req, err := http.NewRequest("POST", "/fanout", io.NopCloser(strings.NewReader("hello")))
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
