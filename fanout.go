@@ -282,12 +282,20 @@ func init() {
 		maxRetries = defaultMaxRetries
 	}
 
-	// Cache TARGETS at startup to avoid per-request env reads.
+	// Cache TARGETS at startup, validating each entry is an absolute http/https URL.
 	if t := os.Getenv("TARGETS"); t != "" && t != "localonly" {
 		for _, u := range strings.Split(t, ",") {
-			if trimmed := strings.TrimSpace(u); trimmed != "" {
-				configuredTargets = append(configuredTargets, trimmed)
+			trimmed := strings.TrimSpace(u)
+			if trimmed == "" {
+				continue
 			}
+			parsed, err := url.Parse(trimmed)
+			if err != nil || !parsed.IsAbs() || parsed.Host == "" ||
+				(parsed.Scheme != "http" && parsed.Scheme != "https") {
+				log.Printf("WARNING: Skipping invalid target URL %q (must be absolute http/https with non-empty host)", trimmed)
+				continue
+			}
+			configuredTargets = append(configuredTargets, trimmed)
 		}
 	}
 
@@ -611,8 +619,8 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			}
 		}
 
-		// target was validated by caller (must be absolute http/https with host). Suppress gosec SSRF warning.
-		// #nosec G704 -- validated target URL in multiplex
+		// target is validated as an absolute http/https URL in init() when configuredTargets is built.
+		// #nosec G107 -- validated target URL at startup
 		req, err := http.NewRequestWithContext(ctx, originalReq.Method, target, bodyReader)
 		if err != nil {
 			resp.Status = http.StatusInternalServerError
@@ -637,7 +645,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			req.Header.Set("X-Retry-Count", strconv.Itoa(attempts))
 		}
 
-		response, err = client.Do(req) // #nosec G704 -- target validated by caller
+		response, err = client.Do(req) // #nosec G107 -- target validated at startup
 
 		if err != nil {
 			if isRetryableError(err) && attempts < maxRetries {
@@ -695,7 +703,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	}
 	defer response.Body.Close()
 
-	respBody, readErr := io.ReadAll(io.LimitReader(response.Body, maxBodySize))
+	// Read one extra byte so we can distinguish an exact-maxBodySize response
+	// from a genuinely truncated one (io.LimitReader alone cannot tell the difference).
+	respBody, readErr := io.ReadAll(io.LimitReader(response.Body, maxBodySize+1))
 	if readErr != nil {
 		resp.Status = http.StatusInternalServerError
 		resp.Error = fmt.Sprintf("Failed to read response body: %v", readErr)
@@ -706,15 +716,15 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 		return resp
 	}
 
+	if int64(len(respBody)) > maxBodySize {
+		resp.Truncated = true
+		respBody = respBody[:maxBodySize]
+		logWarnWithContext(map[string]string{"target": target}, "Response body truncated at limit (%d bytes)", maxBodySize)
+	}
+
 	resp.Status = response.StatusCode
 	resp.Body = string(respBody)
 	resp.Attempts = attempts + 1
-
-	// Warn if the response body was silently capped at maxBodySize.
-	if int64(len(respBody)) == maxBodySize {
-		resp.Truncated = true
-		logWarnWithContext(map[string]string{"target": target}, "Response body truncated at limit (%d bytes)", maxBodySize)
-	}
 
 	logDebugWithContext(
 		map[string]string{
@@ -807,9 +817,14 @@ func main() {
 			if port == "" {
 				port = "8080"
 			}
+			hcClient := &http.Client{Timeout: 5 * time.Second}
 			// #nosec G107 -- localhost-only health probe, port sourced from env
-			resp, err := http.Get("http://localhost:" + port + "/health")
-			if err != nil || resp.StatusCode != http.StatusOK {
+			hcResp, err := hcClient.Get("http://localhost:" + port + "/health")
+			if err != nil {
+				os.Exit(1)
+			}
+			hcResp.Body.Close()
+			if hcResp.StatusCode != http.StatusOK {
 				os.Exit(1)
 			}
 			os.Exit(0)
