@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -160,8 +159,8 @@ func TestWriteJSON(t *testing.T) {
 				Body:     "OK",
 				Attempts: 0, // Due to omitempty tag, this won't appear in JSON when 0
 			},
-			// Updated expected value - removed attempts since it has omitempty tag
-			expected: `{"target":"http://example.com","status":200,"body":"OK","latency":0}`,
+			// Updated expected value - removed attempts since it has omitempty tag; latency_seconds is float64
+			expected: `{"target":"http://example.com","status":200,"body":"OK","latency_seconds":0}`,
 		},
 	}
 
@@ -266,17 +265,16 @@ func TestHealthCheck(t *testing.T) {
 
 // TestEchoHandlerSimpleMode tests the echo handler in simple mode
 func TestEchoHandlerSimpleMode(t *testing.T) {
-	// Save and restore original env vars
-	originalHeader := os.Getenv("ECHO_MODE_HEADER")
-	originalResponse := os.Getenv("ECHO_MODE_RESPONSE")
+	// Save and restore cached echo mode vars (env vars are read at init time, not per-request)
+	origHeader := echoModeHeader
+	origResponse := echoModeResponse
 	defer func() {
-		os.Setenv("ECHO_MODE_HEADER", originalHeader)
-		os.Setenv("ECHO_MODE_RESPONSE", originalResponse)
+		echoModeHeader = origHeader
+		echoModeResponse = origResponse
 	}()
 
-	// Set environment for this test
-	os.Setenv("ECHO_MODE_HEADER", "false")
-	os.Setenv("ECHO_MODE_RESPONSE", "simple")
+	echoModeHeader = false
+	echoModeResponse = "simple"
 
 	// Create a request with a test body
 	body := []byte(`{"test":"data"}`)
@@ -308,17 +306,16 @@ func TestEchoHandlerSimpleMode(t *testing.T) {
 
 // TestEchoHandlerFullMode tests the echo handler in full mode
 func TestEchoHandlerFullMode(t *testing.T) {
-	// Save and restore original env vars
-	originalHeader := os.Getenv("ECHO_MODE_HEADER")
-	originalResponse := os.Getenv("ECHO_MODE_RESPONSE")
+	// Save and restore cached echo mode vars (env vars are read at init time, not per-request)
+	origHeader := echoModeHeader
+	origResponse := echoModeResponse
 	defer func() {
-		os.Setenv("ECHO_MODE_HEADER", originalHeader)
-		os.Setenv("ECHO_MODE_RESPONSE", originalResponse)
+		echoModeHeader = origHeader
+		echoModeResponse = origResponse
 	}()
 
-	// Set environment for this test
-	os.Setenv("ECHO_MODE_HEADER", "true")
-	os.Setenv("ECHO_MODE_RESPONSE", "full")
+	echoModeHeader = true
+	echoModeResponse = "full"
 
 	// Create a request with a test body
 	body := []byte(`{"test":"data"}`)
@@ -383,7 +380,9 @@ func TestSendRequest(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// Set app-level retry count for test
+	// Set app-level retry count for test (restored on exit)
+	origMaxRetries := maxRetries
+	defer func() { maxRetries = origMaxRetries }()
 	maxRetries = 2
 
 	// Call sendRequest with mock server URL
@@ -416,7 +415,9 @@ func TestSendRequestNetworkError(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	// Set app-level retry count for test
+	// Set app-level retry count for test (restored on exit)
+	origMaxRetries := maxRetries
+	defer func() { maxRetries = origMaxRetries }()
 	maxRetries = 1
 
 	// Call sendRequest with a non-existent endpoint (will cause error)
