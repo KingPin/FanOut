@@ -55,7 +55,8 @@ jobs:
 
       - name: Static analysis (gofmt, go vet)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.24 sh -c "gofmt -l . || true; go vet ./... || true"
+          docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.24 sh -c \
+            'GOFMT_OUT=$(gofmt -l .); [ -z "$GOFMT_OUT" ] || (echo "$GOFMT_OUT"; exit 1); go vet ./...'
 
       - name: Security scan (gosec)
         run: |

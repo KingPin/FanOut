@@ -37,7 +37,11 @@ jobs:
         run: |
           go mod download
           go test -v ./...
-        
+
+      - name: Security scan (gosec)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/src -w /src securego/gosec:latest gosec ./...
+
       - name: Build for multiple platforms
         run: |
           mkdir -p dist
