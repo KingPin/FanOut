@@ -672,6 +672,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 					}
 					response = nil
 				}
+				if metricsEnabled {
+					retriesTotal.WithLabelValues(target, "network_error").Inc()
+				}
 				attempts++
 				continue
 			}
@@ -694,6 +697,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			)
 			if cerr := response.Body.Close(); cerr != nil {
 				logWarn("Failed to close response body after server error: %v", cerr)
+			}
+			if metricsEnabled {
+				retriesTotal.WithLabelValues(target, "server_error").Inc()
 			}
 			attempts++
 			continue
@@ -732,6 +738,10 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	resp.Status = response.StatusCode
 	resp.Body = string(respBody)
 	resp.Attempts = attempts + 1
+
+	if metricsEnabled && attempts > 0 {
+		retrySuccess.WithLabelValues(target, strconv.Itoa(attempts+1)).Inc()
+	}
 
 	logDebugWithContext(
 		map[string]string{
