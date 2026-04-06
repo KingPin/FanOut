@@ -371,10 +371,15 @@ func cloneHeaders(original http.Header) http.Header {
 
 func echoHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
 	if err != nil {
 		logError("Error reading body: %v", err)
-		http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
+		writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	if int64(len(bodyBytes)) > maxBodySize {
+		logError("Request body size exceeds limit (%d bytes read)", len(bodyBytes))
+		writeJSONError(w, "Payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
