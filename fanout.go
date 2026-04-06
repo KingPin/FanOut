@@ -400,6 +400,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		if err := json.NewEncoder(w).Encode(map[string]string{"status": "echoed"}); err != nil {
 			logError("Failed to encode echo short response: %v", err)
@@ -421,6 +422,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "healthy"}); err != nil {
 		logError("Failed to encode health response: %v", err)
