@@ -370,13 +370,13 @@ func cloneHeaders(original http.Header) http.Header {
 }
 
 func echoHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
 	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
 	if err != nil {
 		logError("Error reading body: %v", err)
 		http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	defer r.Body.Close()
 
 	echoData := map[string]interface{}{
 		"headers": r.Header,
