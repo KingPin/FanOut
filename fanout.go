@@ -370,13 +370,18 @@ func cloneHeaders(original http.Header) http.Header {
 }
 
 func echoHandler(w http.ResponseWriter, r *http.Request) {
-	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize+1))
 	if err != nil {
 		logError("Error reading body: %v", err)
-		http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
+		writeJSONError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	if int64(len(bodyBytes)) > maxBodySize {
+		logError("Request body size exceeds limit (%d bytes read)", len(bodyBytes))
+		writeJSONError(w, "Payload too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 
 	echoData := map[string]interface{}{
 		"headers": r.Header,
@@ -395,6 +400,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		if err := json.NewEncoder(w).Encode(map[string]string{"status": "echoed"}); err != nil {
 			logError("Failed to encode echo short response: %v", err)
@@ -416,6 +422,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "healthy"}); err != nil {
 		logError("Failed to encode health response: %v", err)
@@ -665,6 +672,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 					}
 					response = nil
 				}
+				if metricsEnabled {
+					retriesTotal.WithLabelValues(target, "network_error").Inc()
+				}
 				attempts++
 				continue
 			}
@@ -687,6 +697,9 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			)
 			if cerr := response.Body.Close(); cerr != nil {
 				logWarn("Failed to close response body after server error: %v", cerr)
+			}
+			if metricsEnabled {
+				retriesTotal.WithLabelValues(target, "server_error").Inc()
 			}
 			attempts++
 			continue
@@ -725,6 +738,10 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 	resp.Status = response.StatusCode
 	resp.Body = string(respBody)
 	resp.Attempts = attempts + 1
+
+	if metricsEnabled && attempts > 0 {
+		retrySuccess.WithLabelValues(target, strconv.Itoa(attempts+1)).Inc()
+	}
 
 	logDebugWithContext(
 		map[string]string{
@@ -823,7 +840,7 @@ func main() {
 			if err != nil {
 				os.Exit(1)
 			}
-			hcResp.Body.Close()
+			_ = hcResp.Body.Close()
 			if hcResp.StatusCode != http.StatusOK {
 				os.Exit(1)
 			}
