@@ -840,7 +840,7 @@ func main() {
 			if err != nil {
 				os.Exit(1)
 			}
-			hcResp.Body.Close()
+			_ = hcResp.Body.Close()
 			if hcResp.StatusCode != http.StatusOK {
 				os.Exit(1)
 			}
