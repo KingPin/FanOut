@@ -67,7 +67,7 @@ jobs:
           docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.24 go test -v -race ./...
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
