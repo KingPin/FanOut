@@ -1,6 +1,6 @@
 # FanOut - Async HTTP Request Distributor
 
-![Go Version](https://img.shields.io/badge/go-1.24%2B-blue)
+![Go Version](https://img.shields.io/badge/go-1.26%2B-blue)
 ![Docker Ready](https://img.shields.io/badge/docker-ready-green)
 [![Code Coverage](https://img.shields.io/codecov/c/github/KingPin/FanOut/main)](https://codecov.io/gh/KingPin/FanOut)
 [![Last Commit](https://img.shields.io/github/last-commit/KingPin/FanOut)](https://github.com/KingPin/FanOut/commits/main)
@@ -256,7 +256,7 @@ docker buildx build \
 ## Development 🛠️
 
 ### Prerequisites
-- Go 1.24+
+- Go 1.26+
 - Docker (for container builds)
 
 ### Build & Test

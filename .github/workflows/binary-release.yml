@@ -5,23 +5,25 @@ on:
     tags:
       - 'v*'  # Trigger on any tag starting with 'v'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # This is required for creating releases
-      packages: write  # This is needed if you're also pushing to GHCR
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # Fetch all history for proper versioning
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.24'
+          go-version: '1.27'
 
       - name: Extract version info
         id: version_info
@@ -40,7 +42,7 @@ jobs:
 
       - name: Security scan (gosec)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/src -w /src securego/gosec:2.22.4 gosec ./...
+          docker run --rm -v ${{ github.workspace }}:/src -w /src ghcr.io/securego/gosec:2.30.0 gosec ./...
 
       - name: Build for multiple platforms
         run: |
@@ -65,7 +67,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: |
             dist/fanout-linux-amd64
