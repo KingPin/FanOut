@@ -292,6 +292,7 @@ func init() {
 			parsed, err := url.Parse(trimmed)
 			if err != nil || !parsed.IsAbs() || parsed.Host == "" ||
 				(parsed.Scheme != "http" && parsed.Scheme != "https") {
+				// #nosec G706 -- operator-supplied env value, %q escapes control chars
 				log.Printf("WARNING: Skipping invalid target URL %q (must be absolute http/https with non-empty host)", trimmed)
 				continue
 			}
@@ -652,7 +653,7 @@ func sendRequest(ctx context.Context, client *http.Client, target string, origin
 			req.Header.Set("X-Retry-Count", strconv.Itoa(attempts))
 		}
 
-		response, err = client.Do(req) // #nosec G107 -- target validated at startup
+		response, err = client.Do(req) // #nosec G107 G704 -- target validated at startup
 
 		if err != nil {
 			if isRetryableError(err) && attempts < maxRetries {
@@ -835,7 +836,7 @@ func main() {
 				port = "8080"
 			}
 			hcClient := &http.Client{Timeout: 5 * time.Second}
-			// #nosec G107 -- localhost-only health probe, port sourced from env
+			// #nosec G107 G704 -- localhost-only health probe, port sourced from env
 			hcResp, err := hcClient.Get("http://localhost:" + port + "/health")
 			if err != nil {
 				os.Exit(1)
