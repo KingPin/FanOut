@@ -130,13 +130,13 @@ CI workflows:
 - Docker-only execution: All development, builds, tests and linters should be executed inside Docker containers, not on the host machine. This includes local runs, single-test runs, formatting, vetting, and CI-parity commands. Examples:
 
     # Run full test suite inside official Go container
-    docker run --rm -v $(pwd):/src -w /src golang:1.24 go test -v -race ./...
+    docker run --rm -v $(pwd):/src -w /src golang:1.27 go test -v -race ./...
 
     # Run a single test inside Docker
-    docker run --rm -v $(pwd):/src -w /src golang:1.24 go test -run '^TestSendRequest$' -v -race .
+    docker run --rm -v $(pwd):/src -w /src golang:1.27 go test -run '^TestSendRequest$' -v -race .
 
     # Build inside Docker
-    docker run --rm -v $(pwd):/src -w /src golang:1.24 go build -trimpath -ldflags="-w -s" -o fanout
+    docker run --rm -v $(pwd):/src -w /src golang:1.27 go build -trimpath -ldflags="-w -s" -o fanout
 
   Prefer running via docker-compose (compose.yml) or CI-style containers so host toolchains are not required.
 

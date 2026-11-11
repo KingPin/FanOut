@@ -51,20 +51,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.24'
+          go-version: '1.27'
 
       - name: Static analysis (gofmt, go vet)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.24 sh -c \
+          docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.27 sh -c \
             'GOFMT_OUT=$(gofmt -l .); [ -z "$GOFMT_OUT" ] || (echo "$GOFMT_OUT"; exit 1); go vet ./...'
 
       - name: Security scan (gosec)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/src -w /src securego/gosec:2.22.4 gosec ./...
+          docker run --rm -v ${{ github.workspace }}:/src -w /src ghcr.io/securego/gosec:2.30.0 gosec ./...
 
       - name: Run unit tests (inside Docker)
         run: |
-          docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.24 go test -v -race ./...
+          docker run --rm -v ${{ github.workspace }}:/src -w /src golang:1.27 go test -v -race ./...
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0

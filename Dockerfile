@@ -1,5 +1,5 @@
 # Stage 1: Cross-compilation builder
-FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS builder
 
 # Add necessary build dependencies
 RUN apk add --no-cache \
